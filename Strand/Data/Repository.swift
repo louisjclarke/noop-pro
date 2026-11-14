@@ -2532,6 +2532,15 @@ final class Repository: ObservableObject {
     /// no locking; one shared copy replaces the per-view-instance `@State` it supersedes.
     private var exploreAllCache: (key: String, byMetricID: [String: [(day: String, value: Double)]])?
 
+    /// NOOP Pro: write externally-derived daily metrics (the CGM's daily glucose figures) into the shared
+    /// metric store under their own source id, so Explore, Compare and the correlation sweep treat them
+    /// like any other NOOP metric. Clears the Explore cache so the next sweep includes them.
+    func upsertExternalMetrics(_ points: [MetricPoint], deviceId: String) async {
+        guard !points.isEmpty, let store = await ensureStore() else { return }
+        _ = try? await store.upsertMetricSeries(points, deviceId: deviceId)
+        exploreAllCache = nil
+    }
+
     /// The merged DailyMetric column backing an Explore metric key, for the days the imported/computed
     /// metricSeries doesn't cover (strap-only WHOOP 5 users). Mirrors InsightsView.dailyOutcome and
     /// Android's dailyPick, extended to every Explore "my-whoop" key that maps to a daily column.

@@ -33,13 +33,23 @@ public struct FusionDay: Equatable, Sendable {
     public let respRate: Double?
     public let spo2: Double?
     public let steps: Int?
+    /// Sleep efficiency 0–100 (or 0–1, normalised on use), deep minutes and disturbances for the night
+    /// ending this morning; mean daytime stress (0–3) for the day.
+    public let sleepEfficiency: Double?
+    public let deepMin: Double?
+    public let disturbances: Int?
+    public let dayStress: Double?
 
     public init(day: String, recovery: Double?, strain: Double?, hrv: Double?, restingHr: Int?, sleepMin: Double?,
-                skinTempDevC: Double? = nil, respRate: Double? = nil, spo2: Double? = nil, steps: Int? = nil) {
+                skinTempDevC: Double? = nil, respRate: Double? = nil, spo2: Double? = nil, steps: Int? = nil,
+                sleepEfficiency: Double? = nil, deepMin: Double? = nil, disturbances: Int? = nil, dayStress: Double? = nil) {
         self.day = day; self.recovery = recovery; self.strain = strain; self.hrv = hrv; self.restingHr = restingHr
         self.sleepMin = sleepMin; self.skinTempDevC = skinTempDevC; self.respRate = respRate; self.spo2 = spo2
-        self.steps = steps
+        self.steps = steps; self.sleepEfficiency = sleepEfficiency; self.deepMin = deepMin
+        self.disturbances = disturbances; self.dayStress = dayStress
     }
+
+    public var efficiencyPct: Double? { sleepEfficiency.map { $0 <= 1.0 ? $0 * 100 : $0 } }
 }
 
 public struct FusionWorkout: Equatable, Sendable {
@@ -105,23 +115,14 @@ public struct FusionFinding: Equatable, Sendable, Identifiable {
     }
 }
 
-struct FusionFeature {
-    let name: String
+struct FusionLink {
+    let feature: String
     let phrase: String
-    let value: (String) -> Double?
+    let outcome: String
     let higherIsWorse: Bool
-    init(_ name: String, _ phrase: String, _ value: @escaping (String) -> Double?, _ higherIsWorse: Bool) {
-        self.name = name; self.phrase = phrase; self.value = value; self.higherIsWorse = higherIsWorse
-    }
-}
-
-struct FusionOutcome {
-    let name: String
-    let value: (FusionDay) -> Double?
-    let higherIsBetter: Bool
-    init(_ name: String, _ value: @escaping (FusionDay) -> Double?, _ higherIsBetter: Bool) {
-        self.name = name; self.value = value; self.higherIsBetter = higherIsBetter
-    }
+    let outcomeHigherIsBetter: Bool
+    let x: (FusionDay) -> Double?
+    let y: (FusionDay) -> Double?
 }
 
 public enum GlucoseFusion {
@@ -171,9 +172,18 @@ public enum GlucoseFusion {
         return f.string(from: p)
     }
 
-    /// Scan every glucose feature against every strap outcome. Glucose on day D-1 (and the night into D)
-    /// is paired with the outcome scored on morning D, so the direction is "glucose then body", never the
-    /// reverse. Findings need |ρ| ≥ 0.3 and n ≥ 10 days.
+    /// Next local day key.
+    static func nextDay(_ key: String, _ cal: Calendar) -> String? {
+        let f = DateFormatter()
+        f.calendar = cal; f.timeZone = cal.timeZone; f.locale = Locale(identifier: "en_US_POSIX"); f.dateFormat = "yyyy-MM-dd"
+        guard let d = f.date(from: key), let n = cal.date(byAdding: .day, value: 1, to: d) else { return nil }
+        return f.string(from: n)
+    }
+
+    /// Every relationship NOOP Pro tests, in both directions — glucose shapes the body (HRV, RHR,
+    /// recovery, sleep, stress) and the body shapes glucose (short sleep → worse next-day control, hard
+    /// training → lower overnight glucose, high stress → higher glucose). Each pairing respects time
+    /// order: the cause is measured before the effect. Findings need |ρ| ≥ 0.3 and n ≥ 10 days.
     public static func findings(series: [GlucoseReading], days: [FusionDay], nights: [FusionNight],
                                 calendar: Calendar = .current) -> [FusionFinding] {
         let daily = dailySummaries(series, calendar: calendar)
@@ -183,53 +193,105 @@ public enum GlucoseFusion {
                 nightByWakeDay[dayKey(Date(timeIntervalSince1970: TimeInterval(n.endTs)), calendar)] = ng
             }
         }
+        var spikesByDay: [String: Double] = [:]
+        for e in GlucoseEvents.excursions(series) {
+            spikesByDay[dayKey(Date(timeIntervalSince1970: TimeInterval(e.startTs)), calendar), default: 0] += 1
+        }
+        for k in daily.keys where spikesByDay[k] == nil { spikesByDay[k] = 0 }
+        let prev: (String) -> String? = { previousDay($0, calendar) }
+        let next: (String) -> String? = { nextDay($0, calendar) }
+        func above140(_ s: GlucoseSummary) -> Double { max(0, 100 - s.tight - s.low - s.veryLow) }
 
-        let features: [FusionFeature] = [
-            FusionFeature("Day-before glucose variability (CV)", "more variable glucose the day before", { d in
-                previousDay(d, calendar).flatMap { daily[$0]?.cv } }, true),
-            FusionFeature("Day-before mean glucose", "higher average glucose the day before", { d in
-                previousDay(d, calendar).flatMap { daily[$0]?.mean } }, true),
-            FusionFeature("Day-before time above 140", "more time above 7.8 mmol/L the day before", { d in
-                previousDay(d, calendar).flatMap { daily[$0].map { 100 - $0.tight - $0.low - $0.veryLow } } }, true),
-            FusionFeature("Overnight glucose variability", "a less stable night-time glucose", { d in nightByWakeDay[d]?.summary.cv }, true),
-            FusionFeature("Overnight mean glucose", "higher overnight glucose", { d in nightByWakeDay[d]?.summary.mean }, true),
-            FusionFeature("Bedtime glucose", "higher glucose at bedtime", { d in nightByWakeDay[d]?.bedtimeGlucose }, true),
-            FusionFeature("Last rise → sleep gap", "a shorter gap between your last glucose rise and sleep", { d in
-                nightByWakeDay[d]?.lastRiseToSleepMinutes }, false),
+        var links: [FusionLink] = []
+        // ── Glucose → body (feature measured the day before / during the night; outcome scored on wake day D)
+        let gFeatures: [(String, String, (String) -> Double?, Bool)] = [
+            ("Day-before glucose variability (CV)", "more variable glucose the day before", { d in prev(d).flatMap { daily[$0]?.cv } }, true),
+            ("Day-before mean glucose", "higher average glucose the day before", { d in prev(d).flatMap { daily[$0]?.mean } }, true),
+            ("Day-before time above 7.8", "more time above 7.8 mmol/L the day before", { d in prev(d).flatMap { daily[$0].map(above140) } }, true),
+            ("Day-before spikes", "more glucose spikes the day before", { d in prev(d).flatMap { spikesByDay[$0] } }, true),
+            ("Overnight glucose variability", "a less stable night-time glucose", { d in nightByWakeDay[d]?.summary.cv }, true),
+            ("Overnight mean glucose", "higher overnight glucose", { d in nightByWakeDay[d]?.summary.mean }, true),
+            ("Overnight lowest glucose", "a lower overnight minimum", { d in nightByWakeDay[d]?.summary.min }, false),
+            ("Bedtime glucose", "higher glucose at bedtime", { d in nightByWakeDay[d]?.bedtimeGlucose }, true),
+            ("Last rise → sleep gap", "a shorter gap between your last glucose rise and sleep", { d in nightByWakeDay[d]?.lastRiseToSleepMinutes }, false),
         ]
-        let outcomes: [FusionOutcome] = [
-            FusionOutcome("recovery", { $0.recovery }, true),
-            FusionOutcome("HRV", { $0.hrv }, true),
-            FusionOutcome("resting heart rate", { $0.restingHr.map(Double.init) }, false),
-            FusionOutcome("sleep duration", { $0.sleepMin }, true),
+        let bOutcomes: [(String, (FusionDay) -> Double?, Bool)] = [
+            ("recovery", { $0.recovery }, true),
+            ("HRV", { $0.hrv }, true),
+            ("resting heart rate", { $0.restingHr.map(Double.init) }, false),
+            ("sleep duration", { $0.sleepMin }, true),
+            ("sleep efficiency", { $0.efficiencyPct }, true),
+            ("deep sleep", { $0.deepMin }, true),
+            ("sleep disturbances", { $0.disturbances.map(Double.init) }, false),
+            ("skin temperature", { $0.skinTempDevC }, false),
+            ("breathing rate", { $0.respRate }, false),
         ]
+        for f in gFeatures {
+            for o in bOutcomes {
+                links.append(FusionLink(feature: f.0, phrase: f.1, outcome: o.0, higherIsWorse: f.3, outcomeHigherIsBetter: o.2,
+                                        x: { d in f.2(d.day) }, y: o.1))
+            }
+        }
+        // Same-day stress ↔ glucose (concurrent; direction can't be separated, so phrased as "comes with").
+        links.append(FusionLink(feature: "Daytime stress", phrase: "a more stressed day", outcome: "average glucose",
+                                higherIsWorse: true, outcomeHigherIsBetter: false,
+                                x: { $0.dayStress }, y: { daily[$0.day]?.mean }))
+        links.append(FusionLink(feature: "Daytime stress", phrase: "a more stressed day", outcome: "glucose variability",
+                                higherIsWorse: true, outcomeHigherIsBetter: false,
+                                x: { $0.dayStress }, y: { daily[$0.day]?.cv }))
+
+        // ── Body → glucose
+        // Last night's sleep (scored on day D) → glucose control during day D.
+        let sleepFeatures: [(String, String, (FusionDay) -> Double?, Bool)] = [
+            ("Last night's sleep duration", "shorter sleep", { $0.sleepMin }, false),
+            ("Last night's sleep efficiency", "less efficient sleep", { $0.efficiencyPct }, false),
+            ("Morning recovery", "a lower recovery", { $0.recovery }, false),
+            ("Morning HRV", "a lower HRV", { $0.hrv }, false),
+        ]
+        let gOutcomes: [(String, (FusionDay) -> Double?, Bool)] = [
+            ("average glucose that day", { daily[$0.day]?.mean }, false),
+            ("glucose variability that day", { daily[$0.day]?.cv }, false),
+            ("time above 7.8 mmol/L that day", { daily[$0.day].map(above140) }, false),
+            ("spike count that day", { spikesByDay[$0.day] }, false),
+        ]
+        for f in sleepFeatures {
+            for o in gOutcomes {
+                links.append(FusionLink(feature: f.0, phrase: f.1, outcome: o.0, higherIsWorse: f.3, outcomeHigherIsBetter: o.2,
+                                        x: f.2, y: o.1))
+            }
+        }
+        // Training on day D → glucose the following night (scored on wake day D+1).
+        links.append(FusionLink(feature: "Day strain", phrase: "a harder training day", outcome: "lowest glucose that night",
+                                higherIsWorse: true, outcomeHigherIsBetter: true,
+                                x: { $0.strain }, y: { d in next(d.day).flatMap { nightByWakeDay[$0]?.summary.min } }))
+        links.append(FusionLink(feature: "Day strain", phrase: "a harder training day", outcome: "average glucose next day",
+                                higherIsWorse: true, outcomeHigherIsBetter: false,
+                                x: { $0.strain }, y: { d in next(d.day).flatMap { daily[$0]?.mean } }))
+        links.append(FusionLink(feature: "Daily steps", phrase: "fewer steps", outcome: "average glucose that day",
+                                higherIsWorse: false, outcomeHigherIsBetter: false,
+                                x: { $0.steps.map(Double.init) }, y: { daily[$0.day]?.mean }))
 
         var out: [FusionFinding] = []
-        for f in features {
-            for o in outcomes {
-                var pairs: [(Double, Double)] = []
-                for d in days {
-                    if let x = f.value(d.day), let y = o.value(d) { pairs.append((x, y)) }
-                }
-                guard pairs.count >= 10 else { continue }
-                let rho = spearman(pairs)
-                guard abs(rho) >= 0.3, rho.isFinite else { continue }
-                let sorted = pairs.sorted { $0.0 < $1.0 }
-                let third = max(1, sorted.count / 3)
-                let lowX = sorted.prefix(third).map(\.1).reduce(0, +) / Double(third)
-                let highX = sorted.suffix(third).map(\.1).reduce(0, +) / Double(third)
-                // "best" = the feature's favourable third.
-                let best = f.higherIsWorse ? lowX : highX
-                let worst = f.higherIsWorse ? highX : lowX
-                let worseOutcome = o.higherIsBetter ? worst < best : worst > best
-                let verb = worseOutcome ? "comes with" : "surprisingly comes with"
-                let dir = (worst > best) ? "higher" : "lower"
-                let lead: String = f.phrase.prefix(1).uppercased() + String(f.phrase.dropFirst())
-                let sentence: String = "\(lead) \(verb) \(dir) \(o.name) (\(fmt(worst)) vs \(fmt(best)), \(pairs.count) days)."
-                out.append(FusionFinding(feature: f.name, outcome: o.name, rho: rho, n: pairs.count,
-                                         bestThirdOutcome: best, worstThirdOutcome: worst, sentence: sentence,
-                                         p: pValue(rho: rho, n: pairs.count)))
-            }
+        for l in links {
+            var pairs: [(Double, Double)] = []
+            for d in days { if let x = l.x(d), let y = l.y(d) { pairs.append((x, y)) } }
+            guard pairs.count >= 10 else { continue }
+            let rho = spearman(pairs)
+            guard rho.isFinite, abs(rho) >= 0.3 else { continue }
+            let sorted = pairs.sorted { $0.0 < $1.0 }
+            let third = max(1, sorted.count / 3)
+            let lowX = sorted.prefix(third).map(\.1).reduce(0, +) / Double(third)
+            let highX = sorted.suffix(third).map(\.1).reduce(0, +) / Double(third)
+            let best = l.higherIsWorse ? lowX : highX
+            let worst = l.higherIsWorse ? highX : lowX
+            let worseOutcome = l.outcomeHigherIsBetter ? worst < best : worst > best
+            let verb = worseOutcome ? "comes with" : "surprisingly comes with"
+            let dir = worst > best ? "higher" : "lower"
+            let lead: String = l.phrase.prefix(1).uppercased() + String(l.phrase.dropFirst())
+            let sentence: String = "\(lead) \(verb) \(dir) \(l.outcome) (\(fmt(worst)) vs \(fmt(best)), \(pairs.count) days)."
+            out.append(FusionFinding(feature: l.feature, outcome: l.outcome, rho: rho, n: pairs.count,
+                                     bestThirdOutcome: best, worstThirdOutcome: worst, sentence: sentence,
+                                     p: pValue(rho: rho, n: pairs.count)))
         }
         return out.sorted { abs($0.rho) * log(Double($0.n)) > abs($1.rho) * log(Double($1.n)) }
     }

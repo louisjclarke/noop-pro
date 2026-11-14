@@ -79,4 +79,18 @@ final class VitalityEngineTests: XCTestCase {
             .first { $0.key == "rhr" }!
         XCTAssertGreaterThan(highRHR.lnHazard, 0)
     }
+
+    // NOOP Pro: glucose control factor.
+    func testGlucoseFactorOnlyAgesAboveThreshold() {
+        let base = VitalityEngine.Inputs(chronoAge: 30, restingHR: 60, sleepHours: 7.5, steps: 8000)
+        var normal = base; normal.gmi = 5.4
+        var high = base; high.gmi = 6.7
+        let c0 = VitalityEngine.contributions(normal).first { $0.key == "glucose" }
+        let c1 = VitalityEngine.contributions(high).first { $0.key == "glucose" }
+        XCTAssertEqual(c0?.lnHazard ?? -1, 0, accuracy: 1e-12)
+        XCTAssertEqual(c1?.lnHazard ?? 0, 0.30, accuracy: 1e-9)
+        XCTAssertNil(VitalityEngine.contributions(base).first { $0.key == "glucose" })
+        let r0 = VitalityEngine.compute(normal)!, r1 = VitalityEngine.compute(high)!
+        XCTAssertGreaterThan(r1.bodyAge, r0.bodyAge)
+    }
 }

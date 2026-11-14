@@ -51,7 +51,8 @@ public struct Baseline: Equatable, Sendable {
 public enum WholePicture {
     /// Score `day` against the 30 days before it.
     public static func build(day: FusionDay, history: [FusionDay], glucose: GlucoseSummary?, night: NightGlucose?,
-                             profile: GlucoseProfile, sleepNeedMin: Double = 480) -> WholePictureDay {
+                             profile: GlucoseProfile, sleepNeedMin: Double = 480,
+                             overnightGlucoseBaseline: Double? = nil, nightExplanation: NightExplanation? = nil) -> WholePictureDay {
         let prior = history.filter { $0.day < day.day }.suffix(30)
         var domains: [WholePictureDay.Domain] = []
         var flags: [WholePictureDay.Flag] = []
@@ -120,8 +121,20 @@ public enum WholePicture {
         if let sp = day.spo2, sp < 93 {
             flags.append(.init(severity: .watch, text: String(format: "Overnight SpO₂ averaged %.0f%%.", sp)))
         }
+        // Infection and inflammation push overnight glucose up alongside temperature and heart rate, so a
+        // raised overnight glucose counts as one more vital in the illness pattern below.
+        if let n = night, let b = overnightGlucoseBaseline, n.summary.mean - b >= 15 {
+            flags.append(.init(severity: .watch, text: "Overnight glucose \(GlucoseUnit.mmol.format(n.summary.mean)) mmol/L — \(GlucoseUnit.mmol.format(n.summary.mean - b)) above your usual night."))
+        }
+        // Why last night's recovery inputs moved, from glucose.
+        if let e = nightExplanation, e.glucoseLikelyContributed {
+            // The low and late-meal facts already have their own flags above; add only the other reasons.
+            for r in e.reasons where !r.hasPrefix("Glucose went low") && !r.hasPrefix("Your last glucose rise") {
+                flags.append(.init(severity: .info, text: r))
+            }
+        }
         // Two or more vitals off at once is the classic early-illness pattern.
-        let vitalHits = flags.filter { $0.text.hasPrefix("Resting HR") || $0.text.hasPrefix("Skin temperature") || $0.text.hasPrefix("Breathing rate") || $0.text.hasPrefix("HRV") }.count
+        let vitalHits = flags.filter { $0.text.hasPrefix("Resting HR") || $0.text.hasPrefix("Skin temperature") || $0.text.hasPrefix("Breathing rate") || $0.text.hasPrefix("HRV") || $0.text.hasPrefix("Overnight glucose") }.count
         if vitalHits >= 2 {
             flags.insert(.init(severity: .act, text: "Several vitals are off baseline together — a common early sign of illness or overreaching. Consider an easy day."), at: 0)
         }

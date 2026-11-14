@@ -3,6 +3,7 @@ import Foundation
 import HealthKit
 import SwiftUI
 import StrandGlucose
+import StrandAnalytics
 import WhoopStore
 
 /// Settings keys for NOOP Pro's glucose layer.
@@ -35,6 +36,13 @@ struct GlucoseAnalysis {
     var wholePicture: WholePictureDay?
     var dawnRise: Double?
     var dailyTIT: [DailyGlucoseRow] = []
+    /// Today's high-stress hours with what glucose was doing in each.
+    var stressContexts: [StressGlucoseContext] = []
+    var stressSummary: String?
+    /// Why last night's HRV / resting HR / sleep moved, from glucose.
+    var lastNightExplanation: NightExplanation?
+    /// Per wake-day explanations for the nights listed in `nights`.
+    var nightExplanations: [Int: NightExplanation] = [:]
 }
 
 struct DailyGlucoseRow: Identifiable {
@@ -65,6 +73,28 @@ final class GlucoseHub: ObservableObject {
     private let healthStore = HKHealthStore()
     private var shareTimer: Timer?
     private var started = false
+    private weak var repo: Repository?
+    private var lastAnalysis = Date.distantPast
+    private var analysisTask: Task<Void, Never>?
+
+    /// Called once at launch so glucose analysis (and everything it feeds: Explore metrics, Vitality,
+    /// Whole Picture, the Coach) keeps running even when no glucose screen is open.
+    func attach(repo: Repository) {
+        self.repo = repo
+        AICoachEngine.extraContextProvider = { [weak self] in self?.coachContext() }
+        scheduleAnalysis(force: true)
+    }
+
+    /// Re-run analysis at most every 10 minutes (or now, when forced), e.g. after new readings arrive.
+    func scheduleAnalysis(force: Bool = false) {
+        guard let repo, force || Date().timeIntervalSince(lastAnalysis) > 600 else { return }
+        analysisTask?.cancel()
+        analysisTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: force ? 3_000_000_000 : 500_000_000)
+            guard !Task.isCancelled else { return }
+            await self?.analyse(repo: repo)
+        }
+    }
 
     private init() {
         GlucosePrefs.registerDefaults()
@@ -108,6 +138,7 @@ final class GlucoseHub: ObservableObject {
     private func ingest(_ readings: [GlucoseReading]) {
         store.upsert(readings)
         reload()
+        scheduleAnalysis()
     }
 
     func reload() {
@@ -237,20 +268,30 @@ final class GlucoseHub: ObservableObject {
     func analyse(repo: Repository) async {
         guard !analysing else { return }
         analysing = true
-        defer { analysing = false }
+        defer { analysing = false; lastAnalysis = Date() }
         let days = repo.days
         let sleeps = repo.sleeps
         let workouts = await repo.workoutRows(days: 30)
+        let stressSeries = await repo.series(key: "stress", source: "my-whoop", days: 120)
+        let stressToday = await StressDayCurve.today(repo: repo)
+        let stressHours: [(startTs: Int, level: Double)] = stressToday?.result.hours.compactMap { h in
+            h.level.map { (startTs: h.startTs, level: $0) }
+        } ?? []
         let profile = self.profile
         let store = self.store
-        let result: GlucoseAnalysis = await Task.detached(priority: .userInitiated) {
-            Self.compute(store: store, days: days, sleeps: sleeps, workouts: workouts, profile: profile)
+        let result: (GlucoseAnalysis, [MetricPoint]) = await Task.detached(priority: .userInitiated) {
+            Self.compute(store: store, days: days, sleeps: sleeps, workouts: workouts, profile: profile,
+                         stressByDay: Dictionary(stressSeries.map { ($0.day, $0.value) }, uniquingKeysWith: { a, _ in a }),
+                         stressHours: stressHours)
         }.value
-        analysis = result
+        analysis = result.0
+        // Daily glucose figures become ordinary NOOP metrics (Explore, Compare, correlations).
+        await repo.upsertExternalMetrics(result.1, deviceId: "dexcom-cgm")
     }
 
     nonisolated static func compute(store: GlucoseStore, days: [DailyMetric], sleeps: [CachedSleepSession],
-                                    workouts: [WorkoutRow], profile: GlucoseProfile) -> GlucoseAnalysis {
+                                    workouts: [WorkoutRow], profile: GlucoseProfile,
+                                    stressByDay: [String: Double], stressHours: [(startTs: Int, level: Double)]) -> (GlucoseAnalysis, [MetricPoint]) {
         let now = Int(Date().timeIntervalSince1970)
         let cal = Calendar.current
         let series = store.series(from: now - 90 * 86_400, to: now + 600)
@@ -281,7 +322,8 @@ final class GlucoseHub: ObservableObject {
         let fdays = days.map {
             FusionDay(day: $0.day, recovery: $0.recovery, strain: $0.strain, hrv: $0.avgHrv, restingHr: $0.restingHr,
                       sleepMin: $0.totalSleepMin, skinTempDevC: $0.skinTempDevC, respRate: $0.respRateBpm,
-                      spo2: $0.spo2Pct, steps: $0.steps)
+                      spo2: $0.spo2Pct, steps: $0.steps, sleepEfficiency: $0.efficiency, deepMin: $0.deepMin,
+                      disturbances: $0.disturbances, dayStress: stressByDay[$0.day])
         }.sorted { $0.day < $1.day }
         a.findings = GlucoseFusion.findings(series: series, days: fdays, nights: nights, calendar: cal)
 
@@ -289,12 +331,79 @@ final class GlucoseHub: ObservableObject {
         a.dailyTIT = daily.keys.sorted().suffix(30).compactMap { k in
             daily[k].map { DailyGlucoseRow(day: k, tit: $0.timeInTarget(profile), mean: $0.mean, cv: $0.cv) }
         }
+        // Stress × glucose: what glucose was doing in each of today's high-stress hours.
+        a.stressContexts = GlucoseAttribution.stressHours(stressHours, series: series)
+        a.stressSummary = GlucoseAttribution.stressSummary(a.stressContexts)
+
+        // Sleep / HRV / resting HR × glucose: explain each recent night against personal baselines.
+        func median(_ v: [Double]) -> Double? {
+            let s = v.sorted(); guard !s.isEmpty else { return nil }
+            return s.count % 2 == 1 ? s[s.count / 2] : (s[s.count / 2 - 1] + s[s.count / 2]) / 2
+        }
+        let recentNights = nights.filter { $0.endTs > now - 30 * 86_400 }
+        let baseHRV = median(recentNights.compactMap(\.avgHrv))
+        let baseRHR = median(recentNights.compactMap { $0.restingHr.map(Double.init) })
+        let nightMeans = a.nights.map(\.summary.mean)
+        let overnightBaseline = nightMeans.count >= 5 ? median(Array(nightMeans.dropFirst())) : nil
+        let strainByDay = Dictionary(fdays.compactMap { d in d.strain.map { (d.day, $0) } }, uniquingKeysWith: { a, _ in a })
+        let typicalStrain = median(Array(strainByDay.values))
+        for ng in a.nights {
+            let startDay = GlucoseFusion.dayKey(Date(timeIntervalSince1970: TimeInterval(ng.night.startTs)), cal)
+            a.nightExplanations[ng.night.startTs] = GlucoseAttribution.night(
+                ng, baselineHRV: baseHRV, baselineRHR: baseRHR, overnightBaselineMean: overnightBaseline,
+                priorDayStrain: strainByDay[startDay], typicalStrain: typicalStrain)
+        }
+        if let last = a.nights.first { a.lastNightExplanation = a.nightExplanations[last.night.startTs] }
+
         let todayKey = GlucoseFusion.dayKey(Date(), cal)
         let fusionToday = fdays.last(where: { $0.day == todayKey })
             ?? FusionDay(day: todayKey, recovery: nil, strain: nil, hrv: nil, restingHr: nil, sleepMin: nil)
         a.wholePicture = WholePicture.build(day: fusionToday, history: fdays, glucose: a.day,
-                                            night: a.nights.first, profile: profile)
-        return a
+                                            night: a.nights.first, profile: profile,
+                                            overnightGlucoseBaseline: overnightBaseline,
+                                            nightExplanation: a.lastNightExplanation)
+
+        // Daily metrics for the shared metric store.
+        var points: [MetricPoint] = []
+        for (day, m) in GlucoseDailyMetrics.compute(series: series, nights: nights, calendar: cal) {
+            for (k, v) in m where v.isFinite { points.append(MetricPoint(day: day, key: k, value: v)) }
+        }
+        return (a, points)
+    }
+
+    // MARK: - Coach context
+
+    func coachContext() -> String? {
+        guard let d = analysis.day else { return nil }
+        let u = GlucoseUnit.mmol
+        var lines = ["CONTINUOUS GLUCOSE (Dexcom G7, mmol/L; analysis only, never for treatment decisions):"]
+        if let r = latest {
+            let mins = max(0, (Int(Date().timeIntervalSince1970) - r.ts) / 60)
+            lines.append("  now: \(u.format(r.mgdl)) \(r.trend?.arrow ?? "") (\(mins) min ago)")
+        }
+        lines.append("  last 24 h: mean \(u.format(d.mean)), CV \(Int(d.cv))%, time 3.9–7.8 \(Int(d.tight))%, "
+                     + "time 3.9–10 \(Int(d.inRange))%, below 3.9 \(String(format: "%.1f", d.low + d.veryLow))%")
+        if let f = analysis.fortnight {
+            lines.append("  14 days: mean \(u.format(f.mean)), GMI \(String(format: "%.1f", f.gmi))%, CV \(Int(f.cv))%")
+        }
+        if !analysis.todayExcursions.isEmpty {
+            let ex = analysis.todayExcursions.map { "+\(u.format($0.rise)) at \(Date(timeIntervalSince1970: TimeInterval($0.startTs)).formatted(date: .omitted, time: .shortened))" }
+            lines.append("  today's rises: " + ex.joined(separator: ", "))
+        }
+        if let n = analysis.nights.first {
+            lines.append("  last night: mean \(u.format(n.summary.mean)), lowest \(u.format(n.summary.min)), "
+                         + "\(n.lows.count) low event(s)" + (n.lastRiseToSleepMinutes.map { ", last rise \(Int($0)) min before sleep" } ?? ""))
+        }
+        if let e = analysis.lastNightExplanation, !e.reasons.isEmpty {
+            lines.append("  glucose and last night's recovery: " + e.reasons.joined(separator: " "))
+        }
+        if let s = analysis.stressSummary { lines.append("  stress × glucose: " + s) }
+        let top = analysis.findings.prefix(5).map { "    - " + $0.sentence + " [\($0.confidence)]" }
+        if !top.isEmpty {
+            lines.append("  personal glucose↔body patterns:")
+            lines.append(contentsOf: top)
+        }
+        return lines.joined(separator: "\n")
     }
 }
 #endif

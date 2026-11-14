@@ -1226,8 +1226,18 @@ final class AICoachEngine: ObservableObject {
                      + ", steps: \(avgInt(last30.compactMap { $0.steps.map(Double.init) }))/day"
                      + ", active energy: \(avgInt(last30.compactMap { $0.activeKcalEst }))kcal/day")
 
+        // NOOP Pro: continuous-glucose context (CGM summary, overnight glucose, spikes, and the
+        // glucose↔body relationships found in this wearer's own history). Empty when no CGM is set up.
+        if let extra = Self.extraContextProvider?(), !extra.isEmpty {
+            lines.append("")
+            lines.append(extra)
+        }
+
         return lines.joined(separator: "\n")
     }
+
+    /// NOOP Pro hook: extra context blocks appended to every coach prompt (set by the glucose layer).
+    static var extraContextProvider: (() -> String?)?
 
     /// Append recent workouts to an existing context string. Async (workouts are read from the store),
     /// so callers that want workouts in the context can await this and feed the result to `send`'s

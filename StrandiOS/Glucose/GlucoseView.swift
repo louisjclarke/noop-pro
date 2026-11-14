@@ -267,6 +267,11 @@ struct GlucoseView: View {
                         ].compactMap { $0 }
                         Text(bits.joined(separator: " · ")).font(StrandFont.caption)
                             .foregroundStyle(n.lows.isEmpty ? StrandPalette.textTertiary : StrandPalette.statusCritical)
+                        if let e = hub.analysis.nightExplanations[n.night.startTs], e.glucoseLikelyContributed {
+                            ForEach(e.reasons, id: \.self) { r in
+                                Text("• " + r).font(StrandFont.caption).foregroundStyle(StrandPalette.textSecondary)
+                            }
+                        }
                     }
                 }
             }

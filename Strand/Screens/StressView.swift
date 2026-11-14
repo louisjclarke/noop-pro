@@ -302,6 +302,10 @@ struct StressView: View {
         VStack(alignment: .leading, spacing: NoopMetrics.gap) {
             SectionHeader("Today's Timeline", overline: "Intraday",
                           trailing: timelineTrailing(day))
+            #if os(iOS)
+            // NOOP Pro: whether today's high-stress hours were glucose (lows, fast drops, meals) or stress.
+            GlucoseStressCard()
+            #endif
 
             NoopCard(tint: StressRamp.calm) {
                 VStack(alignment: .leading, spacing: NoopMetrics.cardInnerSpacing) {

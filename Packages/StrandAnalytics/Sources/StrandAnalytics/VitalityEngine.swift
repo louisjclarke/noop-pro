@@ -38,14 +38,17 @@ public enum VitalityEngine {
         public var rmssd: Double?              // ms, nocturnal HRV
         public var rmssdNorm: Double?          // age/sex-normative RMSSD (the reference)
         public var steps: Double?              // mean daily steps
+        /// NOOP Pro: Glucose Management Indicator (%), the CGM estimate of HbA1c over ≥ 10–14 days.
+        /// nil on builds/users without a CGM, which leaves every other factor byte-identical.
+        public var gmi: Double?
         public init(chronoAge: Double, restingHR: Double? = nil, vo2max: Double? = nil,
                     expectedVO2max: Double? = nil, sleepHours: Double? = nil,
                     sleepConsistency: Double? = nil, rmssd: Double? = nil,
-                    rmssdNorm: Double? = nil, steps: Double? = nil) {
+                    rmssdNorm: Double? = nil, steps: Double? = nil, gmi: Double? = nil) {
             self.chronoAge = chronoAge; self.restingHR = restingHR; self.vo2max = vo2max
             self.expectedVO2max = expectedVO2max; self.sleepHours = sleepHours
             self.sleepConsistency = sleepConsistency; self.rmssd = rmssd
-            self.rmssdNorm = rmssdNorm; self.steps = steps
+            self.rmssdNorm = rmssdNorm; self.steps = steps; self.gmi = gmi
         }
     }
 
@@ -146,6 +149,15 @@ public enum VitalityEngine {
             let deficit = (7000 - clamp(s, 0, 11000)) / 1000
             out.append(Contribution(key: "steps", label: "Daily steps",
                                     lnHazard: clamp(deficit, -4, 4) * 0.064))
+        }
+        if let g = inputs.gmi {
+            // NOOP Pro. Glycaemia and all-cause mortality in adults without diagnosed diabetes is J-shaped
+            // with the minimum around HbA1c 5.0–5.5% and risk climbing above ~5.7% (ARIC; Selvin et al.,
+            // NEJM 2010). Conservative: only the rising arm (above 5.7%) adds hazard, ~0.30 ln-hazard per
+            // percentage point, clamped. A low GMI is NOT scored as protective — a CGM-derived GMI is an
+            // estimate, and very low values usually mean lows rather than better health.
+            out.append(Contribution(key: "glucose", label: "Glucose control",
+                                    lnHazard: clamp(g - 5.7, 0, 3) * 0.30))
         }
         return out
     }

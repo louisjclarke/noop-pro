@@ -2643,6 +2643,11 @@ final class IntelligenceEngine: ObservableObject {
         let vNights = fa7.compactMap { $0.totalSleepMin }.map { Double($0) / 60.0 }.filter { $0 > 0 }
         let vHRVs = fa7.compactMap { $0.avgHrv }
         let vSteps = fa7.compactMap { $0.steps }.map(Double.init)
+        // NOOP Pro: the CGM's 14-day Glucose Management Indicator joins Vitality as "Glucose control".
+        var vGMI: Double? = nil
+        #if os(iOS)
+        vGMI = NoopProGlucoseBridge.gmi14()
+        #endif
         let vInputs = VitalityEngine.Inputs(
             chronoAge: Double(profile.age),
             restingHR: faRHRs.isEmpty ? nil : IntelligenceEngine.medianOf(faRHRs),
@@ -2650,7 +2655,8 @@ final class IntelligenceEngine: ObservableObject {
             sleepConsistency: VitalityEngine.sleepConsistency(nightlyHours: vNights),
             rmssd: vHRVs.isEmpty ? nil : IntelligenceEngine.medianOf(vHRVs),
             rmssdNorm: VitalityEngine.rmssdNorm(forAge: Double(profile.age)),
-            steps: vSteps.isEmpty ? nil : vSteps.reduce(0, +) / Double(vSteps.count))
+            steps: vSteps.isEmpty ? nil : vSteps.reduce(0, +) / Double(vSteps.count),
+            gmi: vGMI)
         if let vRes = VitalityEngine.compute(vInputs) {
             let satKey = IntelligenceEngine.saturdayKey(onOrBefore: newestDay)
             _ = try? await store.upsertMetricSeries([

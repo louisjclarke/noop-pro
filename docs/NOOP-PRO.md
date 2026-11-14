@@ -41,3 +41,20 @@ Keep the Dexcom app as your source for alarms and any treatment decision.
 Code: `Packages/StrandGlucose` (pure, unit-tested) and `StrandiOS/Glucose` (Bluetooth, network,
 storage, screens). G7 message layouts after LoopKit G7SensorKit (MIT, see
 `Packages/StrandGlucose/LICENSE-G7SensorKit-MIT`).
+
+## How glucose connects to the rest of NOOP
+
+Glucose never overwrites a strap measurement (HRV, resting HR, stress and sleep stay exactly what the
+strap measured). It adds causes, and becomes an input where the science supports one:
+
+| NOOP area | Link |
+|---|---|
+| **Explore / Compare / correlations** | 12 daily glucose metrics (Metabolic category, source "Dexcom") are ordinary NOOP metrics, so Explore's correlation sweep tests them against every other metric. |
+| **Vitality / Body Age** | 14-day GMI adds a "Glucose control" factor (rising arm above 5.7 %, ARIC/Selvin 2010, conservative). |
+| **Sleep, HRV, resting HR, recovery** | Each night is explained: overnight lows, late meals, high or unstable overnight glucose, delayed lows after hard training. Shown on Sleep, Glucose and Whole Picture. |
+| **Stress** | Every high-stress hour is labelled: low / fast-falling glucose (adrenaline response), a glucose rise (meal), or steady glucose (genuine stress). |
+| **Illness pattern** | A raised overnight glucose counts alongside skin temperature, resting HR, HRV and breathing rate. |
+| **What Moves You** | Glucose is an outcome: journal behaviours (alcohol, caffeine, late meals…) → average glucose. |
+| **Findings, both directions** | Glucose → recovery, HRV, RHR, sleep duration/efficiency/deep/disturbances, skin temp, breathing; sleep, recovery, HRV, strain, steps and stress → next-day or overnight glucose. |
+| **AI Coach** | Every prompt carries the glucose summary, last night's explanation, stress × glucose and the strongest personal patterns. |
+| **Fitness Age** | Deliberately unchanged: it is a VO₂max model of resting HR and activity, and glucose is not a term in it. Metabolic health is scored in Vitality instead. |

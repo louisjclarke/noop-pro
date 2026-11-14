@@ -1211,6 +1211,11 @@ private struct VitalitySection: View {
         let rhrs = last7.compactMap { $0.restingHr }.map(Double.init)
         let steps = last7.compactMap { $0.steps }.map(Double.init)
         func mean(_ a: [Double]) -> Double? { a.isEmpty ? nil : a.reduce(0, +) / Double(a.count) }
+        // NOOP Pro: same GMI the stored headline used, so the breakdown reconciles with it.
+        var gmi: Double? = nil
+        #if os(iOS)
+        gmi = NoopProGlucoseBridge.gmi14()
+        #endif
         // Aggregate EXACTLY as the stored headline does (IntelligenceEngine), so this "what's driving it"
         // breakdown reconciles with the Vitality / Body Age number it explains rather than being recomputed
         // on different statistics: resting HR + HRV are MEDIANED (robust to one outlier night), sleep +
@@ -1223,7 +1228,7 @@ private struct VitalitySection: View {
             sleepConsistency: VitalityEngine.sleepConsistency(nightlyHours: nights),
             rmssd: hrvs.isEmpty ? nil : IntelligenceEngine.medianOf(hrvs),
             rmssdNorm: VitalityEngine.rmssdNorm(forAge: Double(profile.age)),
-            steps: mean(steps)))
+            steps: mean(steps), gmi: gmi))
     }
 
     var body: some View {

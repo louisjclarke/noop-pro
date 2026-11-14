@@ -206,3 +206,70 @@ final class FusionTests: XCTestCase {
         XCTAssertTrue(wp.domains.contains { $0.name == "Nervous system" })
     }
 }
+
+final class AttributionTests: XCTestCase {
+    func series(_ values: [Double], start: Int) -> [GlucoseReading] {
+        values.enumerated().map { GlucoseReading(ts: start + $0.offset * 300, mgdl: $0.element, source: .g7Live) }
+    }
+
+    func testStressHourDuringLowIsAttributedToGlucose() {
+        let t0 = 1_800_000_000
+        // Hour 1 steady at 95; hour 2 dips to 62.
+        let s = series(Array(repeating: 95, count: 12) + [80, 72, 66, 62, 64, 70, 78, 85, 90, 92, 94, 95], start: t0)
+        let ctx = GlucoseAttribution.stressHours([(t0, 2.4), (t0 + 3600, 2.6)], series: s)
+        XCTAssertEqual(ctx.map(\.cause), [.steady, .low])
+        XCTAssertNotNil(GlucoseAttribution.stressSummary(ctx))
+    }
+
+    func testLowStressHoursIgnored() {
+        let t0 = 1_800_000_000
+        let s = series(Array(repeating: 95, count: 12), start: t0)
+        XCTAssertTrue(GlucoseAttribution.stressHours([(t0, 1.0)], series: s).isEmpty)
+    }
+
+    func testNightExplanationNamesTheLow() throws {
+        let t0 = 1_800_000_000
+        var v = Array(repeating: 100.0, count: 40)
+        for i in 20..<26 { v[i] = 62 }
+        let s = series(v, start: t0)
+        let night = FusionNight(startTs: t0, endTs: t0 + 40 * 300, efficiency: 0.9, restingHr: 60, avgHrv: 40)
+        let ng = try XCTUnwrap(GlucoseFusion.night(night, series: s))
+        let e = GlucoseAttribution.night(ng, baselineHRV: 55, baselineRHR: 52, overnightBaselineMean: 100,
+                                         priorDayStrain: 16, typicalStrain: 10)
+        XCTAssertTrue(e.glucoseLikelyContributed)
+        XCTAssertTrue(e.reasons.first?.hasPrefix("Glucose went low") ?? false)
+        XCTAssertEqual(e.reasons.count, 2)  // low + after hard training
+    }
+
+    func testDailyMetrics() {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: "UTC")!
+        let day0 = 1_800_000_000 - 1_800_000_000 % 86_400
+        let s = (0..<(288 * 12)).map { GlucoseReading(ts: day0 + $0 * 300, mgdl: 90 + Double($0 % 7), source: .g7Live) }
+        let m = GlucoseDailyMetrics.compute(series: s, nights: [], calendar: cal)
+        XCTAssertEqual(m.count, 12)
+        let last = m[m.keys.sorted().last!]!
+        XCTAssertEqual(last["glucose_mean"] ?? 0, 93 / mgdlPerMmol, accuracy: 0.05)
+        XCTAssertNotNil(last["glucose_gmi"])
+        XCTAssertNil(m[m.keys.sorted().first!]!["glucose_gmi"])   // < 10 days of history
+    }
+
+    func testSleepToGlucoseDirection() {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: "UTC")!
+        let day0 = 1_800_000_000 - 1_800_000_000 % 86_400
+        var series: [GlucoseReading] = []
+        var days: [FusionDay] = []
+        for d in 0..<20 {
+            let sleep = 360.0 + Double((d * 53) % 180)        // 6–9 h
+            let mean = 130 - (sleep - 360) / 6                 // shorter sleep → higher glucose
+            for k in 0..<288 { series.append(GlucoseReading(ts: day0 + d * 86_400 + k * 300, mgdl: mean + Double(k % 3), source: .g7Live)) }
+            days.append(FusionDay(day: GlucoseFusion.dayKey(Date(timeIntervalSince1970: TimeInterval(day0 + d * 86_400)), cal),
+                                  recovery: nil, strain: nil, hrv: nil, restingHr: nil, sleepMin: sleep))
+        }
+        let f = GlucoseFusion.findings(series: series, days: days, nights: [], calendar: cal)
+        let hit = f.first { $0.feature == "Last night's sleep duration" && $0.outcome == "average glucose that day" }
+        XCTAssertNotNil(hit)
+        XCTAssertLessThan(hit?.rho ?? 0, -0.9)
+    }
+}

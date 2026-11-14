@@ -24,6 +24,7 @@ struct MetricDescriptor: Identifiable, Hashable {
         case "xiaomi-band":  return "Mi Band"
         case "nutrition-csv": return String(localized: "Nutrition")
         case "noop-mood":    return String(localized: "Mood")
+        case "dexcom-cgm":   return "Dexcom"
         default:             return "Whoop"   // "my-whoop" + on-device computed sources
         }
     }
@@ -115,7 +116,7 @@ struct MetricDescriptor: Identifiable, Hashable {
 /// Canonical catalog — mirrors the WHOOP "Trend View" plus Apple Health body metrics.
 /// Keys match exactly what the importers write into metricSeries.
 enum MetricCatalog {
-    static let categories = ["Heart", "Charge", "Rest", "Effort", "Health", "Nutrition", "Mind"]
+    static let categories = ["Heart", "Charge", "Rest", "Effort", "Health", "Metabolic", "Nutrition", "Mind"]
 
     static let all: [MetricDescriptor] = [
         // ── Heart
@@ -183,6 +184,22 @@ enum MetricCatalog {
         d("stress", String(localized: "Day Stress"), "Health", "/3", "my-whoop", "gauge.with.dots.needle.50percent", 1, false),
 
         // ── Nutrition (imported from a food-tracker CSV: calories-in alongside calories-out)
+        // NOOP Pro — continuous glucose (Dexcom G7), written daily by GlucoseHub under "dexcom-cgm". Living in
+        // the catalogue makes every one of these an ordinary NOOP metric: Explore plots it, Compare overlays
+        // it, and the Explore correlation sweep tests it against every other metric automatically.
+        d("glucose_mean", "Average Glucose", "Metabolic", "mmol/L", "dexcom-cgm", "drop.fill", 1, nil),
+        d("glucose_tight_pct", "Glucose Time in Target (3.9–7.8)", "Metabolic", "%", "dexcom-cgm", "target", 0, true),
+        d("glucose_tir_pct", "Glucose Time in Range (3.9–10)", "Metabolic", "%", "dexcom-cgm", "scope", 0, true),
+        d("glucose_cv", "Glucose Variability (CV)", "Metabolic", "%", "dexcom-cgm", "waveform", 0, false),
+        d("glucose_low_pct", "Time Below 3.9", "Metabolic", "%", "dexcom-cgm", "arrow.down.to.line", 1, false),
+        d("glucose_gmi", "GMI (est. HbA1c)", "Metabolic", "%", "dexcom-cgm", "chart.bar.doc.horizontal", 1, false),
+        d("glucose_spikes", "Glucose Spikes", "Metabolic", "", "dexcom-cgm", "chart.line.uptrend.xyaxis", 0, false),
+        d("glucose_peak_rise", "Biggest Glucose Rise", "Metabolic", "mmol/L", "dexcom-cgm", "arrow.up.right", 1, false),
+        d("glucose_night_mean", "Overnight Glucose", "Metabolic", "mmol/L", "dexcom-cgm", "moon.fill", 1, nil),
+        d("glucose_night_min", "Overnight Lowest Glucose", "Metabolic", "mmol/L", "dexcom-cgm", "moon.zzz.fill", 1, nil),
+        d("glucose_bedtime", "Bedtime Glucose", "Metabolic", "mmol/L", "dexcom-cgm", "bed.double.fill", 1, nil),
+        d("glucose_last_rise_gap", "Last Glucose Rise → Sleep", "Metabolic", "min", "dexcom-cgm", "clock.arrow.circlepath", 0, true),
+
         d("calories_in", String(localized: "Calories In"), "Nutrition", "kcal", "nutrition-csv", "fork.knife", 0, nil),
         d("protein_g", String(localized: "Protein"), "Nutrition", "g", "nutrition-csv", "p.circle", 0, nil),
         d("carbs_g", String(localized: "Carbs"), "Nutrition", "g", "nutrition-csv", "c.circle", 0, nil),
@@ -256,6 +273,7 @@ enum MetricCatalog {
         case "Effort":    return String(localized: "Effort")
         case "Health":    return String(localized: "Health")
         case "Nutrition": return String(localized: "Nutrition")
+        case "Metabolic": return "Metabolic"
         case "Mind":      return String(localized: "Mind")
         default:          return category
         }

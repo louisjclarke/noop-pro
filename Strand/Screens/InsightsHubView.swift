@@ -493,6 +493,8 @@ final class InsightsHubViewModel: ObservableObject {
 
     enum Outcome: String, CaseIterable, Identifiable {
         case recovery, hrv, sleep, rhr
+        /// NOOP Pro: average daily glucose from the CGM (journal behaviours → glucose).
+        case glucose
         var id: String { rawValue }
         var label: String {
             switch self {
@@ -500,6 +502,7 @@ final class InsightsHubViewModel: ObservableObject {
             case .hrv:      return "HRV"
             case .sleep:    return String(localized: "Rest")
             case .rhr:      return "RHR"
+            case .glucose:  return "Glucose"
             }
         }
         /// metricSeries key.
@@ -509,6 +512,7 @@ final class InsightsHubViewModel: ObservableObject {
             case .hrv:      return "hrv"
             case .sleep:    return "sleep_performance"
             case .rhr:      return "rhr"
+            case .glucose:  return "glucose_mean"
             }
         }
         /// The engine's outcome label (carried onto each RankedEffect).
@@ -518,14 +522,16 @@ final class InsightsHubViewModel: ObservableObject {
             case .hrv:      return "HRV"
             case .sleep:    return String(localized: "Rest")
             case .rhr:      return String(localized: "Resting HR")
+            case .glucose:  return "Average glucose"
             }
         }
-        var higherIsBetter: Bool { self != .rhr }
+        var higherIsBetter: Bool { self != .rhr && self != .glucose }
         var domain: DomainTheme {
             switch self {
             case .recovery: return .charge
             case .hrv, .sleep: return .rest
             case .rhr: return .stress
+            case .glucose: return .charge
             }
         }
         func format(_ v: Double) -> String {
@@ -533,6 +539,7 @@ final class InsightsHubViewModel: ObservableObject {
             case .recovery, .sleep: return "\(Int(v.rounded()))%"
             case .hrv:              return "\(Int(v.rounded())) ms"
             case .rhr:              return "\(Int(v.rounded())) bpm"
+            case .glucose:          return String(format: "%.1f mmol/L", v)
             }
         }
     }
@@ -554,7 +561,7 @@ final class InsightsHubViewModel: ObservableObject {
     /// The source id dose rows are parked under (mirrors MoodStore's noop-mood isolation).
     static let doseSource = "noop-journal-dose"
 
-    private let outcomeKeys = ["recovery", "hrv", "sleep_performance", "rhr"]
+    private let outcomeKeys = ["recovery", "hrv", "sleep_performance", "rhr", "glucose_mean"]
 
     // MARK: Load
 
@@ -575,7 +582,8 @@ final class InsightsHubViewModel: ObservableObject {
         let mergedDays = repo.days
         var byKey: [String: [String: Double]] = [:]
         for key in outcomeKeys {
-            let s = await repo.series(key: key, source: "my-whoop")
+            // NOOP Pro: glucose outcomes live under the CGM's own source id.
+            let s = await repo.series(key: key, source: key.hasPrefix("glucose_") ? "dexcom-cgm" : "my-whoop")
             var dict: [String: Double] = [:]
             for row in s { dict[row.day] = row.value }
             for d in mergedDays where dict[d.day] == nil {
