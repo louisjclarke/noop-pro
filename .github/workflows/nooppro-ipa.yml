@@ -1,0 +1,81 @@
+# NOOP Pro: test the glucose package, build an unsigned sideload .ipa, and publish it to a rolling
+# "nooppro-latest" release so it can be downloaded straight to the iPhone and opened in SideStore.
+name: NOOP Pro IPA
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: nooppro-ipa-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  glucose-tests:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v5
+      - name: Test StrandGlucose
+        working-directory: Packages/StrandGlucose
+        run: swift test
+
+  ios:
+    needs: glucose-tests
+    # iOS 26 SDK (Liquid Glass) → Xcode 26 → macos-26, same as upstream's release job.
+    runs-on: macos-26
+    timeout-minutes: 50
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate Xcode project
+        run: xcodegen generate
+      - name: Build NOOPiOS (unsigned, Release)
+        run: >-
+          set -o pipefail &&
+          xcodebuild -scheme NOOPiOS -configuration Release -destination 'generic/platform=iOS'
+          -derivedDataPath build/dd
+          CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=""
+          build 2>&1 | tee build.log | grep -E 'error:|warning: .*Glucose|BUILD (SUCCEEDED|FAILED)' || true;
+          grep -q 'BUILD SUCCEEDED' build.log
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
+      - name: Package .ipa
+        id: pkg
+        run: |
+          APP=$(find build/dd/Build/Products/Release-iphoneos -maxdepth 1 -name '*.app' -type d | head -1)
+          test -n "$APP" || { echo ".app not found"; exit 1; }
+          # Free Apple ID: watch apps cost extra App IDs and rarely sideload; the widget stays.
+          rm -rf "$APP/Watch"
+          Tools/prepare-ios-sideload-app.sh "$APP"
+          rm -rf Payload && mkdir Payload && cp -R "$APP" Payload/
+          SHORT=$(git rev-parse --short HEAD)
+          IPA="NOOP-Pro-${SHORT}.ipa"
+          zip -qr "$IPA" Payload
+          echo "ipa=$IPA" >> "$GITHUB_OUTPUT"
+          echo "short=$SHORT" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NOOP-Pro-ipa
+          path: ${{ steps.pkg.outputs.ipa }}
+      - name: Publish to the rolling release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG=nooppro-latest
+          NOTES="Build ${{ steps.pkg.outputs.short }} — $(git log -1 --pretty=%s)"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --notes "$NOTES" --prerelease
+            for a in $(gh release view "$TAG" --json assets --jq '.assets[].name'); do gh release delete-asset "$TAG" "$a" -y; done
+          else
+            gh release create "$TAG" --title "NOOP Pro (latest build)" --notes "$NOTES" --prerelease --target "$GITHUB_SHA"
+          fi
+          cp "${{ steps.pkg.outputs.ipa }}" NOOP-Pro.ipa
+          gh release upload "$TAG" "${{ steps.pkg.outputs.ipa }}" NOOP-Pro.ipa --clobber

@@ -56,6 +56,9 @@ packages:
     path: Packages/StrandImport
   StrandDesign:
     path: Packages/StrandDesign
+  # NOOP Pro: Dexcom G7 decoding, Dexcom Share, CGM metrics and glucose×strap fusion (pure Swift).
+  StrandGlucose:
+    path: Packages/StrandGlucose
   # Clean-room local Oura ring BLE protocol (framing, auth, decoders, driver). Pure value types,
   # zero CoreBluetooth, so it stays headless/JVM-testable; the app target imports it for OuraLiveSource.
   OuraProtocol:
@@ -239,8 +242,8 @@ targets:
     info:
       path: StrandiOS/Resources/Info.plist
       properties:
-        CFBundleName: NOOP
-        CFBundleDisplayName: NOOP
+        CFBundleName: NOOP Pro
+        CFBundleDisplayName: NOOP Pro
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         # Surfaces APP_GROUP_ID to runtime (WidgetSnapshot.suiteName) so the App Group id isn't
@@ -299,9 +302,9 @@ targets:
           # the re-score task, which is submitted only when a re-score is OWED, and a missing strap owes
           # none, so that task would never run in the one case the warning exists for.
           - $(PRODUCT_BUNDLE_IDENTIFIER).stalebattery
-        NSBluetoothAlwaysUsageDescription: "NOOP connects directly to your WHOOP strap over Bluetooth to read heart rate, R-R intervals, battery, and sensor data locally on your iPhone. Nothing leaves your device."
+        NSBluetoothAlwaysUsageDescription: "NOOP Pro connects directly to your WHOOP strap and listens to your Dexcom G7 sensor over Bluetooth, reading heart rate, R-R intervals, sensor data and glucose locally on your iPhone."
         NSLocationWhenInUseUsageDescription: "NOOP records your route during an outdoor workout to show distance, pace, and a map, and keeps recording while the screen is off. The route stays on your device. Nothing leaves it."
-        NSHealthShareUsageDescription: "NOOP reads your own Apple Health data on-device to compute recovery, strain, and sleep. Nothing leaves your device."
+        NSHealthShareUsageDescription: "NOOP Pro reads your own Apple Health data on-device, including blood glucose history, to compute recovery, strain, sleep and metabolic analysis. Nothing leaves your device."
         NSHealthUpdateUsageDescription: "NOOP writes the metrics it computes from your strap back into Apple Health, on-device and only when you allow it."
         NSMotionUsageDescription: "NOOP reads your iPhone's step count for a walking or running workout to show steps in the activity summary. It stays on your device. Nothing leaves it."
         # K4: Coach voice input. Speech is transcribed ON-DEVICE ONLY (requiresOnDeviceRecognition);
@@ -360,6 +363,7 @@ targets:
       - package: StrandAnalytics
       - package: StrandImport
       - package: StrandDesign
+      - package: StrandGlucose
       - package: MarkdownUI
       - package: ZIPFoundation
       - package: PolarProtocol

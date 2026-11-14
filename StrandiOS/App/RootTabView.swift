@@ -463,6 +463,10 @@ struct RootTabView: View {
             ScreenScaffold(title: "More", subtitle: "Everything else, one tap away",
                            onRefresh: { await repo.refresh() },
                            topBackground: liquidScaffoldSky()) {
+                moreSection("NOOP Pro") {
+                    MoreRow("Whole Picture", "circle.hexagongrid.fill", .wholePicture)
+                    MoreRow("Glucose", "drop.fill", .glucose)
+                }
                 moreSection("Insights") {
                     MoreRow("What Moves You", "wand.and.sparkles", .insightsHub)
                     MoreRow("Intelligence", "brain.head.profile", .intelligence)
@@ -546,7 +550,8 @@ struct RootTabView: View {
     @ViewBuilder
     private func moreSection<Rows: View>(_ title: String,
                                          @ViewBuilder rows: @escaping () -> Rows) -> some View {
-        let isOpen = expandedMoreSections.contains(title)
+        // NOOP Pro: its own section is pinned open so Whole Picture and Glucose are always one tap away.
+        let isOpen = title == "NOOP Pro" || expandedMoreSections.contains(title)
         VStack(alignment: .leading, spacing: 10) {
             // Tappable overline header: the same ALL-CAPS tracked label as before, now with a trailing
             // chevron that rotates open. A plain Button (not a SwiftUI DisclosureGroup) so the header keeps
@@ -597,6 +602,7 @@ struct RootTabView: View {
 /// per-screen chrome the old inline links applied lives at the single `navigationDestination(for:)`
 /// registration in `moreTab`.
 private enum MoreDestination: Hashable {
+    case wholePicture, glucose
     case insightsHub, intelligence, coach, insights, explore, compare
     case live, workouts, liftLog, health, labBook, stress, breathe, intervals, rhythm
     case fusedRecord, appleHealth, miBand, dataSources, backupSync, shortcutsExport, noopLimitations
@@ -604,6 +610,8 @@ private enum MoreDestination: Hashable {
 
     @ViewBuilder var destination: some View {
         switch self {
+        case .wholePicture:    WholePictureView()
+        case .glucose:         GlucoseView()
         case .insightsHub:     InsightsHubView()
         case .intelligence:    IntelligenceView()
         case .coach:           CoachView()
