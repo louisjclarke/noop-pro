@@ -78,7 +78,15 @@ struct GlucoseSettingsView: View {
 
             Section {
                 Toggle("Import from Apple Health", isOn: $healthKitEnabled)
-                Button("Import last 90 days now") { Task { await hub.importHealthKit(days: 90) } }
+                Button {
+                    Task { await hub.importHealthKit(days: 90) }
+                } label: {
+                    HStack {
+                        Text(hub.healthImporting ? "Importing…" : "Import last 90 days now")
+                        if hub.healthImporting { Spacer(); ProgressView() }
+                    }
+                }
+                .disabled(hub.healthImporting)
                 if !hub.healthStatus.isEmpty { Text(hub.healthStatus).font(.footnote) }
             } header: { Text("History") } footer: {
                 Text("Dexcom writes to Apple Health three hours late, so it fills history and gaps rather than live values.")

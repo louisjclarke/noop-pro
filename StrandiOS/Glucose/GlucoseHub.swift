@@ -101,7 +101,7 @@ final class GlucoseHub: ObservableObject {
             shareStatus = d.bool(forKey: GlucosePrefs.shareEnabled) ? "Add your Dexcom login" : "Off"
         }
         if d.bool(forKey: GlucosePrefs.healthKitEnabled) {
-            Task { await importHealthKit(days: 3) }
+            Task { await importHealthKit(days: 3, interactive: false) }
         }
     }
 
@@ -148,17 +148,45 @@ final class GlucoseHub: ObservableObject {
 
     func resetShareSession() async { await share.reset() }
 
+    @Published private(set) var healthImporting = false
+
     /// Dexcom writes to Apple Health with a 3-hour delay — useless live, ideal for history. Imports
-    /// everything from the last `days`.
-    func importHealthKit(days: Int) async {
-        guard HKHealthStore.isHealthDataAvailable() else { healthStatus = "Apple Health unavailable"; return }
-        let type = HKQuantityType(.bloodGlucose)
-        do {
-            try await healthStore.requestAuthorization(toShare: [], read: [type])
-        } catch {
-            healthStatus = "Apple Health access not granted"
+    /// everything from the last `days`. `interactive` = the wearer tapped the button, so it may show
+    /// the permission sheet; the launch-time top-up never does (no window exists that early, and an
+    /// unpresentable sheet can leave the request pending forever).
+    func importHealthKit(days: Int, interactive: Bool = true) async {
+        guard !healthImporting else { return }
+        guard HKHealthStore.isHealthDataAvailable() else { healthStatus = "Apple Health isn't available on this device."; return }
+        guard HealthKitBridge.hasHealthKitEntitlement else {
+            healthStatus = "This install has no Apple Health permission — the signing step removed it. Reinstall NOOP Pro through SideStore and keep app extensions, or use Dexcom Share for history."
             return
         }
+        let type = HKQuantityType(.bloodGlucose)
+        healthImporting = true
+        defer { healthImporting = false }
+
+        let status: HKAuthorizationRequestStatus = await withCheckedContinuation { cont in
+            healthStore.getRequestStatusForAuthorization(toShare: [], read: [type]) { s, _ in cont.resume(returning: s) }
+        }
+        if status != .unnecessary {
+            guard interactive else { return }
+            healthStatus = "Asking Apple Health for access…"
+            let asked = await withTimeout(seconds: 60) { [healthStore] in
+                try await healthStore.requestAuthorization(toShare: [], read: [type])
+            }
+            switch asked {
+            case .timedOut:
+                healthStatus = "Apple Health didn't respond. Close NOOP Pro fully, reopen it and tap Import again."
+                return
+            case .failed(let e):
+                healthStatus = "Apple Health refused: \(e.localizedDescription)"
+                return
+            case .done:
+                break
+            }
+        }
+
+        healthStatus = "Reading \(days) days of glucose from Apple Health…"
         let start = Date().addingTimeInterval(-Double(days) * 86_400)
         let pred = HKQuery.predicateForSamples(withStart: start, end: Date())
         let samples: [HKQuantitySample] = await withCheckedContinuation { cont in
@@ -174,7 +202,30 @@ final class GlucoseHub: ObservableObject {
                            source: .appleHealth, sensorId: nil)
         }
         ingest(readings)
-        healthStatus = "Imported \(readings.count) from Apple Health (last \(days) days)"
+        if readings.isEmpty {
+            // Apple Health returns an empty result (not an error) when read access is off.
+            healthStatus = "Apple Health returned no glucose. Check: Health app → Browse → Blood Glucose shows Dexcom data, "
+                + "and Settings → Health → Data Access & Devices → NOOP Pro → Blood Glucose is on. Then tap Import again."
+        } else {
+            healthStatus = "Imported \(readings.count) readings from Apple Health (last \(days) days)."
+        }
+    }
+
+    enum TimedResult { case done, failed(Error), timedOut }
+
+    private func withTimeout(seconds: Double, _ op: @escaping @Sendable () async throws -> Void) async -> TimedResult {
+        await withTaskGroup(of: TimedResult.self) { group in
+            group.addTask {
+                do { try await op(); return .done } catch { return .failed(error) }
+            }
+            group.addTask {
+                try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+                return .timedOut
+            }
+            let first = await group.next() ?? .timedOut
+            group.cancelAll()
+            return first
+        }
     }
 
     func addManual(mgdl: Double, at date: Date) {
