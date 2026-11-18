@@ -6,13 +6,40 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+  # Self-healing: GitHub's hosted Mac pool sometimes never acquires the job ("not acquired by Runner
+  # of type hosted even after multiple attempts"). Every 30 min, build again if the published IPA is
+  # not yet the current main.
+  schedule:
+    - cron: "7,37 * * * *"
 
 concurrency:
   group: nooppro-ipa-${{ github.ref }}
-  cancel-in-progress: true
+  # Never cancel a build that is running; a newer trigger waits its turn instead.
+  cancel-in-progress: false
 
 jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      need: ${{ steps.c.outputs.need }}
+    steps:
+      - uses: actions/checkout@v5
+      - id: c
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          SHORT=$(git rev-parse --short HEAD)
+          BODY=$(gh release view nooppro-latest --json body -q .body 2>/dev/null || true)
+          if [ "${{ github.event_name }}" = "schedule" ] && echo "$BODY" | grep -q "$SHORT"; then
+            echo "need=false" >> "$GITHUB_OUTPUT"; echo "IPA for $SHORT already published"
+          else
+            echo "need=true" >> "$GITHUB_OUTPUT"
+          fi
+
   glucose-tests:
+    needs: check
+    if: needs.check.outputs.need == 'true'
+
     # macos-26: the macos-15 pool stopped picking this job up (queued until cancelled, 18 Nov).
     runs-on: macos-26
     steps:
@@ -23,6 +50,8 @@ jobs:
 
   ios:
     # Runs in parallel with the package tests so a slow runner queue costs one wait, not two.
+    needs: check
+    if: needs.check.outputs.need == 'true'
     # iOS 26 SDK (Liquid Glass) → Xcode 26 → macos-26, same as upstream's release job.
     runs-on: macos-26
     timeout-minutes: 50
