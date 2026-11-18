@@ -73,7 +73,7 @@ final class BodyAgeService: ObservableObject {
     func attach(repo: Repository, profile: ProfileStore) {
         self.repo = repo
         self.profile = profile
-        repo.$refreshSeq
+        repo.$days
             .dropFirst()
             .debounce(for: .seconds(20), scheduler: RunLoop.main)
             .sink { [weak self] _ in Task { @MainActor in self?.schedule() } }
