@@ -373,6 +373,12 @@ final class GlucoseHub: ObservableObject {
                          stressHours: stressHours)
         }.value
         analysis = result.0
+        // The Whole Picture's multi-vital pattern (which also counts overnight glucose) raises the same
+        // once-a-day early-warning notification as NOOP's own illness watch, under the same switch.
+        if UserDefaults.standard.bool(forKey: "behavior.illnessWatch"),
+           result.0.wholePicture?.flags.contains(where: { $0.text.hasPrefix("Several vitals") }) == true {
+            IllnessNotifier.post(String(localized: "Several of your vitals, including overnight glucose, are off your baseline together, a common early sign of illness or overreaching. Open Whole Picture for details."))
+        }
         // Daily glucose figures become ordinary NOOP metrics (Explore, Compare, correlations).
         await repo.upsertExternalMetrics(result.1, deviceId: "dexcom-cgm")
     }

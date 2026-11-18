@@ -1962,6 +1962,12 @@ struct TodayView: View {
             if selectedDayOffset == 0 { JournalReminderCard() }
         case .addedCards:
             hostedCardsSection
+        case .noopPro:
+            #if os(iOS)
+            if selectedDayOffset == 0 { GlucoseTodayCard() }
+            #else
+            EmptyView()
+            #endif
         }
     }
 
