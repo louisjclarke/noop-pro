@@ -13,7 +13,8 @@ concurrency:
 
 jobs:
   glucose-tests:
-    runs-on: macos-15
+    # macos-26: the macos-15 pool stopped picking this job up (queued until cancelled, 18 Nov).
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v5
       - name: Test StrandGlucose
@@ -21,7 +22,7 @@ jobs:
         run: swift test
 
   ios:
-    needs: glucose-tests
+    # Runs in parallel with the package tests so a slow runner queue costs one wait, not two.
     # iOS 26 SDK (Liquid Glass) → Xcode 26 → macos-26, same as upstream's release job.
     runs-on: macos-26
     timeout-minutes: 50
