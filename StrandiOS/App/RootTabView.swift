@@ -466,6 +466,7 @@ struct RootTabView: View {
                 moreSection("NOOP Pro") {
                     MoreRow("Whole Picture", "circle.hexagongrid.fill", .wholePicture)
                     MoreRow("Glucose", "drop.fill", .glucose)
+                    MoreRow("Devices & strap pairing", "dot.radiowaves.left.and.right", .proDevices)
                 }
                 moreSection("Insights") {
                     MoreRow("What Moves You", "wand.and.sparkles", .insightsHub)
@@ -602,7 +603,7 @@ struct RootTabView: View {
 /// per-screen chrome the old inline links applied lives at the single `navigationDestination(for:)`
 /// registration in `moreTab`.
 private enum MoreDestination: Hashable {
-    case wholePicture, glucose
+    case wholePicture, glucose, proDevices
     case insightsHub, intelligence, coach, insights, explore, compare
     case live, workouts, liftLog, health, labBook, stress, breathe, intervals, rhythm
     case fusedRecord, appleHealth, miBand, dataSources, backupSync, shortcutsExport, noopLimitations
@@ -612,6 +613,7 @@ private enum MoreDestination: Hashable {
         switch self {
         case .wholePicture:    WholePictureView()
         case .glucose:         GlucoseView()
+        case .proDevices:      DevicesView()
         case .insightsHub:     InsightsHubView()
         case .intelligence:    IntelligenceView()
         case .coach:           CoachView()
