@@ -273,3 +273,31 @@ final class AttributionTests: XCTestCase {
         XCTAssertLessThan(hit?.rho ?? 0, -0.9)
     }
 }
+
+final class ClarityImportTests: XCTestCase {
+    func testParsesMmolExport() throws {
+        let csv = """
+        Index,Timestamp (YYYY-MM-DDThh:mm:ss),Event Type,Event Subtype,Patient Info,Device Info,Source Device ID,Glucose Value (mmol/L),Insulin Value (u),Carb Value (grams),Duration (hh:mm:ss),Glucose Rate of Change (mmol/L/min),Transmitter Time (Long Integer),Transmitter ID
+        1,,FirstName,,Louis,,,,,,,,,
+        2,,Device,,,"G7 Mobile App",iOS G7,,,,,,,
+        3,2026-11-10T08:00:00,EGV,,,,iOS G7,5.6,,,,0.1,12345,DXCM4K
+        4,2026-11-10T08:05:00,EGV,,,,iOS G7,Low,,,,,12645,DXCM4K
+        5,2026-11-10T08:10:00,Alert,High,,,iOS G7,,,,,,,
+        6,2026-11-10T08:15:00,EGV,,,,iOS G7,"6,1",,,,,12945,DXCM4K
+        """
+        let r = try ClarityImport.parse(csv, timeZone: TimeZone(identifier: "UTC")!)
+        XCTAssertEqual(r.readings.count, 3)
+        XCTAssertEqual(r.readings[0].mgdl, 100.9, accuracy: 0.05)
+        XCTAssertEqual(r.readings[1].mgdl, 40)
+        XCTAssertEqual(r.readings[2].mgdl, 109.9, accuracy: 0.05)
+        XCTAssertEqual(r.readings[0].sensorId, "DXCM4K")
+        XCTAssertEqual(r.readings[0].source, .clarity)
+        XCTAssertEqual(r.readings[0].ts, 1_794_297_600)
+    }
+
+    func testMgdlExportAndRejection() throws {
+        let csv = "Index,Timestamp (YYYY-MM-DDThh:mm:ss),Event Type,Glucose Value (mg/dL)\n1,2026-11-10T08:00:00,EGV,101"
+        XCTAssertEqual(try ClarityImport.parse(csv, timeZone: TimeZone(identifier: "UTC")!).readings.first?.mgdl, 101)
+        XCTAssertThrowsError(try ClarityImport.parse("a,b,c\n1,2,3"))
+    }
+}

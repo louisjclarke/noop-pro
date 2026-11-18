@@ -11,6 +11,7 @@ public enum GlucoseSource: String, Codable, CaseIterable, Sendable {
     case dexcomShare = "dexcom_share"
     case appleHealth = "apple_health"
     case manual = "manual"           // finger-prick entered by the wearer
+    case clarity = "dexcom_clarity"  // imported from a Dexcom Clarity CSV export (history)
 
     public var priority: Int {
         switch self {
@@ -18,6 +19,7 @@ public enum GlucoseSource: String, Codable, CaseIterable, Sendable {
         case .g7Backfill: return 4
         case .manual: return 3
         case .dexcomShare: return 2
+        case .clarity: return 2
         case .appleHealth: return 1
         }
     }

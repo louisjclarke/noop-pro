@@ -21,6 +21,7 @@ struct GlucoseSettingsView: View {
     @State private var manualValue = ""
     @State private var manualDate = Date()
     @State private var confirmDelete = false
+    @State private var pickClarity = false
     @AppStorage(GlucosePrefs.buzzLow) private var buzzLow = false
     @AppStorage(GlucosePrefs.buzzLowMmol) private var buzzLowMmol = 3.9
     @AppStorage(GlucosePrefs.buzzHigh) private var buzzHigh = false
@@ -95,6 +96,13 @@ struct GlucoseSettingsView: View {
             }
 
             Section {
+                Button("Import Dexcom Clarity export (CSV)") { pickClarity = true }
+                if !hub.clarityStatus.isEmpty { Text(hub.clarityStatus).font(.footnote) }
+            } header: { Text("History from Dexcom Clarity") } footer: {
+                Text("Works on every install. On clarity.dexcom.eu sign in → Export (top right) → pick a date range up to 90 days → Export, then choose the CSV here (Files → Downloads). Re-importing the same range is safe.")
+            }
+
+            Section {
                 Toggle("Import from Apple Health", isOn: $healthKitEnabled)
                 Button {
                     Task { await hub.importHealthKit(days: 90) }
@@ -107,7 +115,7 @@ struct GlucoseSettingsView: View {
                 .disabled(hub.healthImporting)
                 if !hub.healthStatus.isEmpty { Text(hub.healthStatus).font(.footnote) }
             } header: { Text("History") } footer: {
-                Text("Dexcom writes to Apple Health three hours late, so it fills history and gaps rather than live values.")
+                Text("Dexcom writes to Apple Health three hours late, so it fills history and gaps rather than live values. Needs an install signed with Apple Health permission (a paid Apple Developer account); on a free Apple ID use the Clarity import above.")
             }
 
             Section("Finger-prick") {
@@ -130,6 +138,9 @@ struct GlucoseSettingsView: View {
             } header: { Text("Your data") }
         }
         .navigationTitle("Glucose settings")
+        .fileImporter(isPresented: $pickClarity, allowedContentTypes: [.commaSeparatedText, .plainText, .text]) { result in
+            if case .success(let url) = result { Task { await hub.importClarity(url: url) } }
+        }
         .onChange(of: bleEnabled) { _, _ in hub.applySettings() }
         .onChange(of: shareEnabled) { _, _ in hub.applySettings() }
         .onAppear {

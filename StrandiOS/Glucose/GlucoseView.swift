@@ -101,6 +101,7 @@ struct GlucoseView: View {
         case .dexcomShare: return "Dexcom Share"
         case .appleHealth: return "Apple Health"
         case .manual: return "Finger-prick"
+        case .clarity: return "Clarity import"
         }
     }
 

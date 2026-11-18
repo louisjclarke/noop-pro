@@ -319,6 +319,34 @@ final class GlucoseHub: ObservableObject {
         }
     }
 
+    @Published private(set) var clarityStatus = ""
+
+    /// Import a Dexcom Clarity CSV export (full history; works without Apple Health).
+    func importClarity(url: URL) async {
+        clarityStatus = "Reading \(url.lastPathComponent)…"
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        guard let data = try? Data(contentsOf: url),
+              let text = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1) else {
+            clarityStatus = "Couldn't open that file."
+            return
+        }
+        do {
+            let result = try await Task.detached(priority: .userInitiated) { try ClarityImport.parse(text) }.value
+            guard !result.readings.isEmpty else {
+                clarityStatus = "No glucose readings found in that export."
+                return
+            }
+            ingest(result.readings)
+            let first = result.readings.first!.date.formatted(date: .abbreviated, time: .omitted)
+            let last = result.readings.last!.date.formatted(date: .abbreviated, time: .omitted)
+            clarityStatus = "Imported \(result.readings.count) readings (\(first) – \(last))."
+            scheduleAnalysis(force: true)
+        } catch {
+            clarityStatus = (error as? ClarityImport.Failure)?.description ?? error.localizedDescription
+        }
+    }
+
     func addManual(mgdl: Double, at date: Date) {
         ingest([GlucoseReading(ts: Int(date.timeIntervalSince1970), mgdl: mgdl, source: .manual)])
     }
