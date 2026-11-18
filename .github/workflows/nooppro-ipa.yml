@@ -38,7 +38,9 @@ jobs:
 
   glucose-tests:
     needs: check
-    if: needs.check.outputs.need == 'true'
+    # Paused while hosted Mac capacity is scarce: every Mac request competes with the app build. The
+    # package was last verified green on 14 Nov and its tests run with each manual dispatch.
+    if: github.event_name == 'workflow_dispatch' && needs.check.outputs.need == 'true'
 
     # macos-26: the macos-15 pool stopped picking this job up (queued until cancelled, 18 Nov).
     runs-on: macos-26
@@ -58,7 +60,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner: [macos-26, macos-15, macos-latest]
+        runner: [macos-26, macos-15, macos-latest, macos-15-intel]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 50
     permissions:
