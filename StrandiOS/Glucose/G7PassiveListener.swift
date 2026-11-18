@@ -38,6 +38,9 @@ final class G7PassiveListener: NSObject {
     private var activation: [String: Date] = [:]
     private var backfill: [UUID: [G7BackfillMessage]] = [:]
     private var enabled = false
+    /// Last time each peripheral delivered glucose, so an expired sensor stops being reconnected once
+    /// its replacement is live.
+    private var lastGlucose: [UUID: Date] = [:]
 
     private let cgmService = CBUUID(string: G7UUID.cgmService)
     private let advService = CBUUID(string: G7UUID.advertisementService)
@@ -180,6 +183,15 @@ extension G7PassiveListener: CBPeripheralDelegate {
         if let auth = service.characteristics?.first(where: { $0.uuid == authChar }) {
             peripheral.setNotifyValue(true, for: auth)
         }
+        // Safety net: if we joined after the Dexcom app had already finished authenticating, the auth
+        // status notification has been and gone. Subscribing to control on an unauthenticated link is
+        // simply refused by the sensor, so trying after a short wait costs nothing.
+        queue.asyncAfter(deadline: .now() + 8) { [weak self, weak peripheral] in
+            guard let self, let p = peripheral, p.state == .connected,
+                  let control = service.characteristics?.first(where: { $0.uuid == self.controlChar }),
+                  !control.isNotifying else { return }
+            p.setNotifyValue(true, for: control)
+        }
     }
 
     func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
@@ -196,6 +208,14 @@ extension G7PassiveListener: CBPeripheralDelegate {
             switch event {
             case .glucose(let m):
                 let now = Date()
+                lastGlucose[peripheral.identifier] = now
+                // A newer sensor is live: stop re-arming connections to sensors silent for 2 h+.
+                for (id, p) in peripherals where id != peripheral.identifier {
+                    if (lastGlucose[id] ?? .distantPast) < now.addingTimeInterval(-7200) {
+                        central.cancelPeripheralConnection(p)
+                        peripherals.removeValue(forKey: id)
+                    }
+                }
                 activation[name] = m.activationDate(receivedAt: now)
                 saveActivation()
                 publish(.receiving(name))

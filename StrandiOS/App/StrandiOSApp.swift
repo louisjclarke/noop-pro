@@ -21,6 +21,8 @@ struct StrandiOSApp: App {
     /// The phone→watch link. Built + activated here so the watch app actually receives snapshots on a
     /// real device; without an owner that pushes it, the watch only ever shows placeholder data.
     @StateObject private var watch = WatchSessionBridge()
+    /// NOOP Pro: observed so the glucose widget's deep link can raise the Glucose sheet.
+    @StateObject private var glucoseHub = GlucoseHub.shared
     /// Shared cross-screen navigation hook (e.g. Live → Devices). The iOS shell (`RootTabView`)
     /// observes it and presents the Devices manager.
     @StateObject private var router: NavRouter
@@ -96,7 +98,7 @@ struct StrandiOSApp: App {
         // NOOP Pro: start the Dexcom G7 listener (and Share fallback) at launch so a background
         // Bluetooth relaunch — iOS waking the app for the sensor's 5-minute check-in — is handled too.
         GlucoseHub.shared.start()
-        GlucoseHub.shared.attach(repo: model.repo)
+        GlucoseHub.shared.attach(repo: model.repo, buzz: { model.buzzStrapOnce() })
         // The strap-sync Live Activity (Lock Screen + Dynamic Island). Same placement, same reason — and
         // it must also run in a process the Sync Strap shortcut launched with no scene.
         SyncLiveActivityController.shared.attach(to: model.live)
@@ -326,6 +328,12 @@ struct StrandiOSApp: App {
                     if url.host == "import-health" {
                         model.handleHealthImportURL(url)
                     }
+                    // NOOP Pro: the glucose widget opens straight onto the Glucose screen.
+                    if url.host == "glucose" { glucoseHub.showGlucoseSheet = true }
+                }
+                .sheet(isPresented: $glucoseHub.showGlucoseSheet) {
+                    NavigationStack { GlucoseView() }
+                        .environmentObject(model.repo)
                 }
                 .alert("Import Apple Health data?", isPresented: healthImportAlertPresented) {
                     healthImportAlertButtons

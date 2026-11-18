@@ -21,6 +21,10 @@ struct GlucoseSettingsView: View {
     @State private var manualValue = ""
     @State private var manualDate = Date()
     @State private var confirmDelete = false
+    @AppStorage(GlucosePrefs.buzzLow) private var buzzLow = false
+    @AppStorage(GlucosePrefs.buzzLowMmol) private var buzzLowMmol = 3.9
+    @AppStorage(GlucosePrefs.buzzHigh) private var buzzHigh = false
+    @AppStorage(GlucosePrefs.buzzHighMmol) private var buzzHighMmol = 10.0
 
     var body: some View {
         Form {
@@ -74,6 +78,20 @@ struct GlucoseSettingsView: View {
                 }
             } header: { Text("Dexcom Share (internet)") } footer: {
                 Text("Turn on Share in the Dexcom app first. Used when this phone isn't in range of the sensor. Your login stays in this iPhone's Keychain and only ever goes to Dexcom.")
+            }
+
+            Section {
+                Toggle("Buzz my WHOOP when low", isOn: $buzzLow)
+                if buzzLow {
+                    Stepper(String(format: "Below %.1f mmol/L", buzzLowMmol), value: $buzzLowMmol, in: 3.0...5.5, step: 0.1)
+                }
+                Toggle("Buzz my WHOOP when high", isOn: $buzzHigh)
+                if buzzHigh {
+                    Stepper(String(format: "Above %.1f mmol/L", buzzHighMmol), value: $buzzHighMmol, in: 7.0...16.0, step: 0.5)
+                }
+                if let b = hub.lastBuzz { LabeledContent("Last", value: b) }
+            } header: { Text("Wrist alerts") } footer: {
+                Text("A silent nudge on the strap when a live reading crosses your line — once per crossing, then at most every 30 minutes. It's a convenience, not a medical alarm: keep the Dexcom app's alerts on.")
             }
 
             Section {

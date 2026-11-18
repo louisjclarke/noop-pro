@@ -2,6 +2,8 @@
 import Foundation
 import HealthKit
 import SwiftUI
+import UIKit
+import WidgetKit
 import StrandGlucose
 import StrandAnalytics
 import WhoopStore
@@ -14,11 +16,18 @@ enum GlucosePrefs {
     static let unit = "nooppro.glucose.unit"
     static let profile = "nooppro.glucose.profile"
     static let staleAlert = "nooppro.glucose.staleAlert"
+    /// Opt-in wrist alerts: buzz the WHOOP when a live reading crosses these (mmol/L). A secondary nudge
+    /// only — the Dexcom app's alarms stay the safety net.
+    static let buzzLow = "nooppro.glucose.buzzLow"
+    static let buzzLowMmol = "nooppro.glucose.buzzLowMmol"
+    static let buzzHigh = "nooppro.glucose.buzzHigh"
+    static let buzzHighMmol = "nooppro.glucose.buzzHighMmol"
 
     static func registerDefaults() {
         UserDefaults.standard.register(defaults: [
             bleEnabled: true, shareEnabled: false, healthKitEnabled: true,
             unit: GlucoseUnit.mmol.rawValue, profile: GlucoseProfile.generalHealth.rawValue,
+            buzzLow: false, buzzLowMmol: 3.9, buzzHigh: false, buzzHighMmol: 10.0,
         ])
     }
 }
@@ -66,6 +75,9 @@ final class GlucoseHub: ObservableObject {
     @Published private(set) var storedCount = 0
     @Published private(set) var analysis = GlucoseAnalysis()
     @Published private(set) var analysing = false
+    /// Raised by the glucose widget's deep link.
+    @Published var showGlucoseSheet = false
+    @Published private(set) var lastBuzz: String?
 
     let store = GlucoseStore.shared
     private let ble = G7PassiveListener()
@@ -74,14 +86,26 @@ final class GlucoseHub: ObservableObject {
     private var shareTimer: Timer?
     private var started = false
     private weak var repo: Repository?
+    private var buzzStrap: (() -> Void)?
+    private var lastBuzzAt = Date.distantPast
+    private var lastBuzzBand = 0
     private var lastAnalysis = Date.distantPast
     private var analysisTask: Task<Void, Never>?
 
     /// Called once at launch so glucose analysis (and everything it feeds: Explore metrics, Vitality,
     /// Whole Picture, the Coach) keeps running even when no glucose screen is open.
-    func attach(repo: Repository) {
+    func attach(repo: Repository, buzz: (() -> Void)? = nil) {
         self.repo = repo
+        self.buzzStrap = buzz
         AICoachEngine.extraContextProvider = { [weak self] in self?.coachContext() }
+        NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                self.reload()
+                await self.pollShare(force: false)
+                self.scheduleAnalysis()
+            }
+        }
         scheduleAnalysis(force: true)
     }
 
@@ -136,16 +160,52 @@ final class GlucoseHub: ObservableObject {
     }
 
     private func ingest(_ readings: [GlucoseReading]) {
+        let before = latest?.ts ?? 0
         store.upsert(readings)
         reload()
+        if let l = latest, l.ts > before { checkWristAlert(l) }
         scheduleAnalysis()
     }
 
     func reload() {
         let now = Int(Date().timeIntervalSince1970)
         recent = store.series(from: now - 86_400, to: now + 600)
+        let changed = recent.last?.ts != latest?.ts
         latest = recent.last
         storedCount = store.count()
+        if changed { publishWidget() }
+    }
+
+    /// Hand the latest value and a 3-hour trace to the glucose widget, then ask WidgetKit to redraw it.
+    private func publishWidget() {
+        guard let l = latest else { return }
+        let now = Int(Date().timeIntervalSince1970)
+        let trace = GlucoseSeries.slice(recent, from: now - 3 * 3600, to: now + 600).map(\.mgdl)
+        let midnight = Int(Calendar.current.startOfDay(for: Date()).timeIntervalSince1970)
+        let today = GlucoseMetrics.summary(GlucoseSeries.slice(recent, from: midnight, to: now + 600))
+        GlucoseWidgetState(mgdl: l.mgdl, rate: l.ratePerMinute, ts: l.date, mmol: unit == .mmol,
+                           targetLow: profile.targetLow, targetHigh: profile.targetHigh,
+                           trace: trace, timeInTarget: today?.timeInTarget(profile)).save()
+        WidgetCenter.shared.reloadTimelines(ofKind: "NOOPProGlucoseWidget")
+    }
+
+    /// Opt-in buzz on the strap when a fresh reading crosses a threshold. One buzz per crossing, then
+    /// at most every 30 minutes while it stays out of range.
+    private func checkWristAlert(_ r: GlucoseReading) {
+        let d = UserDefaults.standard
+        guard Int(Date().timeIntervalSince1970) - r.ts < 600, let buzz = buzzStrap else { return }
+        let low = d.double(forKey: GlucosePrefs.buzzLowMmol) * mgdlPerMmol
+        let high = d.double(forKey: GlucosePrefs.buzzHighMmol) * mgdlPerMmol
+        var band = 0
+        if d.bool(forKey: GlucosePrefs.buzzLow), r.mgdl < low { band = -1 }
+        if d.bool(forKey: GlucosePrefs.buzzHigh), r.mgdl > high { band = 1 }
+        defer { lastBuzzBand = band }
+        guard band != 0 else { return }
+        let newCrossing = band != lastBuzzBand
+        guard newCrossing || Date().timeIntervalSince(lastBuzzAt) > 30 * 60 else { return }
+        buzz()
+        lastBuzzAt = Date()
+        lastBuzz = "\(band < 0 ? "Low" : "High") buzz at \(Date().formatted(date: .omitted, time: .shortened)) (\(unit.format(r.mgdl)))"
     }
 
     /// Share is the fallback: skip the network when the sensor's own radio delivered in the last 7 min,
