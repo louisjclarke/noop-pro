@@ -2640,6 +2640,10 @@ final class IntelligenceEngine: ObservableObject {
         // Vitality (0–100) + Body Age. VitalityEngine gates on ≥3 inputs, so a sparse week writes nothing.
         // (VO₂max is omitted here , fitness is already its own Fitness Age headline; Vitality leans on
         // resting HR, sleep duration + regularity, HRV-vs-age-norm, and steps.)
+        // NOOP Pro: on iPhone, Body Age v2 (BodyAgeService) is the ONE writer of body_age / vitality, with
+        // eleven inputs and a per-factor breakdown. This original six-input pass stays for macOS only, so
+        // two writers never put two scales on the same weekly key.
+        #if !os(iOS)
         let vNights = fa7.compactMap { $0.totalSleepMin }.map { Double($0) / 60.0 }.filter { $0 > 0 }
         let vHRVs = fa7.compactMap { $0.avgHrv }
         let vSteps = fa7.compactMap { $0.steps }.map(Double.init)
@@ -2664,6 +2668,7 @@ final class IntelligenceEngine: ObservableObject {
                 MetricPoint(day: satKey, key: "body_age", value: vRes.bodyAge),
             ], deviceId: computedId)
         }
+        #endif
 
         markPostLoopPhase("weekly")
         // ── Steps ESTIMATE (WHOOP 4.0) , DAILY, keyed to each strap-only day ────────────────────────

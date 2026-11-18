@@ -28,7 +28,9 @@ final class UpdateChecker: ObservableObject {
 
     @Published var state: State = .idle
 
-    private static let endpoint = URL(string: "https://api.github.com/repos/ryanbr/noop/releases/latest")!
+    /// NOOP Pro: this install's own rolling release, not the upstream NOOP project (whose releases do not
+    /// contain NOOP Pro's features, so "newer" there would be a downgrade here).
+    private static let endpoint = URL(string: "https://api.github.com/repos/louisjclarke/noop-pro/releases/tags/nooppro-latest")!
 
     /// One release read. Shared by the button and the automatic check (#1659) so there is exactly one
     /// copy of the endpoint, the headers and the parsing — a second copy is how the two would drift into
@@ -46,11 +48,13 @@ final class UpdateChecker: ObservableObject {
             let (data, resp) = try await URLSession.shared.data(for: req)
             guard (resp as? HTTPURLResponse)?.statusCode == 200,
                   let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let tag = json["tag_name"] as? String,
                   let urlString = json["html_url"] as? String,
                   let url = URL(string: urlString) else { return nil }
-            let latest = tag.hasPrefix("v") ? String(tag.dropFirst()) : tag
-            return Release(version: latest, url: url, notes: cleanNotes(json["body"] as? String ?? ""))
+            // NOOP Pro: the rolling release's notes carry "version <marketing>.<build>" (written by the
+            // IPA workflow), the same shape `UpdateWatch.installedVersion` reports for this install.
+            let body = json["body"] as? String ?? ""
+            guard let latest = Self.proVersion(inNotes: body) else { return nil }
+            return Release(version: latest, url: url, notes: cleanNotes(Self.stripVersionToken(body)))
         } catch {
             return nil
         }
@@ -68,6 +72,16 @@ final class UpdateChecker: ObservableObject {
                 ? .available(version: release.version, url: release.url, notes: release.notes)
                 : .upToDate(version: release.version)
         }
+    }
+
+    /// NOOP Pro: "version 12.1.0.1057" in the release notes → "12.1.0.1057".
+    static func proVersion(inNotes body: String) -> String? {
+        guard let r = body.range(of: #"version (\d+(\.\d+)+)"#, options: .regularExpression) else { return nil }
+        return String(body[r].dropFirst("version ".count))
+    }
+
+    static func stripVersionToken(_ body: String) -> String {
+        body.replacingOccurrences(of: #" ?· ?version \d+(\.\d+)+"#, with: "", options: .regularExpression)
     }
 
     /// Turn a GitHub release body into a short, readable "what's new" for an inline preview: drop the

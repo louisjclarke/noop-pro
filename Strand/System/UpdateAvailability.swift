@@ -120,7 +120,11 @@ enum UpdateWatch {
     /// from SettingsView, which had it private, so the button and the automatic check cannot disagree
     /// about what version is installed.
     static var installedVersion: String {
-        (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? AppChangelog.currentVersion
+        let marketing = (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? AppChangelog.currentVersion
+        // NOOP Pro: every CI build carries its own build number, and the rolling release is compared as
+        // "<marketing>.<build>", so a new build of the same marketing version still reads as newer.
+        guard let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String, Int(build) != nil else { return marketing }
+        return marketing + "." + build
     }
 
     /// Re-entrancy guard. `runIfDue` is called from `.onAppear`, which is not guaranteed to fire once,
@@ -170,11 +174,11 @@ enum UpdateWatch {
             // What's New row beside it. `composeMessage` only assembles what it is handed.
             let body = String(localized: "You're on \(currentVersion). Open Settings and use Check for updates to see what's new and download \(release.version).")
             let sideload = sideloadHint
-                ? String(localized: "AltStore or SideStore can install it for you automatically if you added NOOP's source; a direct .ipa still has to be signed on your device.")
+                ? String(localized: "If you added the NOOP Pro source to SideStore, it shows there as an update; otherwise download NOOP-Pro.ipa from the release page and open it in SideStore.")
                 : nil
             UpdateStore.shared.post(UpdateItem(
                 kind: .newVersion,
-                title: String(localized: "NOOP \(release.version) is available"),
+                title: String(localized: "A new NOOP Pro build is available (\(release.version))"),
                 message: UpdateAvailability.composeMessage(body: body,
                                                            sideload: sideload,
                                                            notes: release.notes)))

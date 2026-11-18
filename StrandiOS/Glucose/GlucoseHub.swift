@@ -97,7 +97,10 @@ final class GlucoseHub: ObservableObject {
     func attach(repo: Repository, buzz: (() -> Void)? = nil) {
         self.repo = repo
         self.buzzStrap = buzz
-        AICoachEngine.extraContextProvider = { [weak self] in self?.coachContext() }
+        AICoachEngine.extraContextProvider = { [weak self] in
+            let parts = [self?.coachContext(), BodyAgeService.shared.coachLine()].compactMap { $0 }
+            return parts.isEmpty ? nil : parts.joined(separator: "\n")
+        }
         NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }

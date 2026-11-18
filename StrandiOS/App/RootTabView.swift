@@ -466,6 +466,7 @@ struct RootTabView: View {
                 moreSection("NOOP Pro") {
                     MoreRow("Whole Picture", "circle.hexagongrid.fill", .wholePicture)
                     MoreRow("Glucose", "drop.fill", .glucose)
+                    MoreRow("Body Age", "figure.stand", .bodyAge)
                     MoreRow("Devices & strap pairing", "dot.radiowaves.left.and.right", .proDevices)
                 }
                 moreSection("Insights") {
@@ -603,7 +604,7 @@ struct RootTabView: View {
 /// per-screen chrome the old inline links applied lives at the single `navigationDestination(for:)`
 /// registration in `moreTab`.
 private enum MoreDestination: Hashable {
-    case wholePicture, glucose, proDevices
+    case wholePicture, glucose, bodyAge, proDevices
     case insightsHub, intelligence, coach, insights, explore, compare
     case live, workouts, liftLog, health, labBook, stress, breathe, intervals, rhythm
     case fusedRecord, appleHealth, miBand, dataSources, backupSync, shortcutsExport, noopLimitations
@@ -613,6 +614,10 @@ private enum MoreDestination: Hashable {
         switch self {
         case .wholePicture:    WholePictureView()
         case .glucose:         GlucoseView()
+        case .bodyAge:         ScreenScaffold(title: "Body Age", subtitle: "Weekly wellness estimate",
+                                              onRefresh: { await BodyAgeService.shared.schedule(force: true) }) {
+                                   BodyAgeSection()
+                               }
         case .proDevices:      DevicesView()
         case .insightsHub:     InsightsHubView()
         case .intelligence:    IntelligenceView()

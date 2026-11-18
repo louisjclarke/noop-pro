@@ -1232,6 +1232,16 @@ private struct VitalitySection: View {
     }
 
     var body: some View {
+        // NOOP Pro: on iPhone the section is Body Age v2 (eleven inputs, full breakdown, pace of aging),
+        // read back from BodyAgeService, the one writer of body_age / vitality there.
+        #if os(iOS)
+        BodyAgeSection()
+        #else
+        legacyBody
+        #endif
+    }
+
+    private var legacyBody: some View {
         VStack(alignment: .leading, spacing: NoopMetrics.gap) {
             SectionHeader("Vitality", overline: "Weekly",
                           trailing: bodyAge != nil ? String(localized: "Body Age \(Int((bodyAge ?? 0).rounded()))") : nil)

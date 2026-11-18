@@ -2541,6 +2541,34 @@ final class Repository: ObservableObject {
         exploreAllCache = nil
     }
 
+    /// NOOP Pro Body Age v2: the computed ("my-whoop") source this install writes derived series under.
+    var computedWriteId: String { computedDeviceId }
+
+    /// NOOP Pro Body Age v2: read one key from the computed source only (no imported layer, no daily
+    /// column), for series the app derives itself and must read back exactly as written.
+    func computedSeries(key: String, from: String, to: String) async -> [MetricPoint] {
+        guard let store = await ensureStore() else { return [] }
+        var byDay: [String: MetricPoint] = [:]
+        for id in computedReadIds.reversed() {
+            for p in (try? await store.metricSeries(deviceId: id, key: key, from: from, to: to)) ?? [] { byDay[p.day] = p }
+        }
+        return byDay.values.sorted { $0.day < $1.day }
+    }
+
+    /// NOOP Pro Body Age v2: drop one day's point of a computed key.
+    func deleteComputedPoint(day: String, key: String) async {
+        guard let store = await ensureStore() else { return }
+        for id in computedReadIds { _ = try? await store.deleteMetricSeriesPoint(deviceId: id, day: day, key: key) }
+    }
+
+    /// NOOP Pro Body Age v2: drop every stored point of a computed key (used once, when the Body Age
+    /// model changes scale, so old weeks never sit on the same trend as new ones).
+    func deleteComputedSeries(key: String) async {
+        guard let store = await ensureStore() else { return }
+        for id in computedReadIds { _ = try? await store.deleteMetricSeries(deviceId: id, key: key) }
+        exploreAllCache = nil
+    }
+
     /// The merged DailyMetric column backing an Explore metric key, for the days the imported/computed
     /// metricSeries doesn't cover (strap-only WHOOP 5 users). Mirrors InsightsView.dailyOutcome and
     /// Android's dailyPick, extended to every Explore "my-whoop" key that maps to a daily column.

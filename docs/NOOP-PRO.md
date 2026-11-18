@@ -14,7 +14,17 @@ Not affiliated with WHOOP or Dexcom. Not a medical device.
 4. Free Apple ID signatures last 7 days: refresh in SideStore (or a weekly Shortcuts automation).
    A free ID allows 3 active sideloaded apps, SideStore included.
 
-Every push to `main` rebuilds the IPA (workflow `NOOP Pro IPA`).
+Every push to `main` rebuilds the IPA (workflow `NOOP Pro IPA`), with its own build number.
+
+### Updates through SideStore
+
+Each build also publishes a SideStore source. Add it once in SideStore → Sources → +:
+
+    https://github.com/louisjclarke/noop-pro/releases/download/nooppro-latest/sidestore-source.json
+
+New builds then show as an Update in SideStore → My Apps. The app's own update check (Settings →
+Check for updates, and once a day automatically) reads the same rolling release and compares
+`<marketing version>.<build number>`.
 
 ## Glucose sources (best first)
 
@@ -58,3 +68,14 @@ strap measured). It adds causes, and becomes an input where the science supports
 | **Findings, both directions** | Glucose → recovery, HRV, RHR, sleep duration/efficiency/deep/disturbances, skin temp, breathing; sleep, recovery, HRV, strain, steps and stress → next-day or overnight glucose. |
 | **AI Coach** | Every prompt carries the glucose summary, last night's explanation, stress × glucose and the strongest personal patterns. |
 | **Fitness Age** | Deliberately unchanged: it is a VO₂max model of resting HR and activity, and glucose is not a term in it. Metabolic health is scored in Vitality instead. |
+
+## Body Age (Health tab, and More → NOOP Pro → Body Age)
+
+A weekly wellness estimate in years from eleven inputs, each shown with the years it adds or takes away
+(they sum to the figure): sleep-measured resting HR (neutral 60 bpm), HRV against the age norm, a
+measured or waist-based VO₂ max, sleep duration and regularity, steps (phone or the calibrated WHOOP 4.0
+estimate), weekly minutes in heart-rate-reserve zones 1–3 and 4–5, strength minutes, lean body mass
+(sex-specific body-fat cut-off, lower confidence) and the CGM's GMI. Pace of aging fits up to 26 weekly
+offsets (Body Age minus real age) and needs 6 readings across 5 weeks. Engine: `VitalityEngine` and
+`PaceOfAging` in `Packages/StrandAnalytics`; the one writer is `Strand/Data/BodyAgeService.swift`.
+The activity curves and pace method follow PHMN (aansun/PHMNoop).
