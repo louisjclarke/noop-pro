@@ -1,0 +1,34 @@
+# NOOP Pro: the unit tests for the packages NOOP Pro changes (Body Age in StrandAnalytics, glucose in
+# StrandGlucose), on whichever hosted Mac pool has a machine. The full Swift Packages CI asks for 11
+# macos-15 machines at once and has been dropped unacquired when Mac capacity is short.
+name: NOOP Pro tests
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'Packages/StrandAnalytics/**'
+      - 'Packages/StrandGlucose/**'
+      - '.github/workflows/nooppro-tests.yml'
+
+concurrency:
+  group: nooppro-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-26, macos-15, macos-latest]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v5
+      - name: Test StrandAnalytics
+        working-directory: Packages/StrandAnalytics
+        run: swift test
+      - name: Test StrandGlucose
+        working-directory: Packages/StrandGlucose
+        run: swift test
