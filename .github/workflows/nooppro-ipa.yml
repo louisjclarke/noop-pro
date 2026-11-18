@@ -88,7 +88,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: build-log
+          name: build-log-${{ matrix.runner }}
           path: build.log
       - name: Package .ipa
         id: pkg
@@ -106,7 +106,7 @@ jobs:
           echo "short=$SHORT" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v4
         with:
-          name: NOOP-Pro-ipa
+          name: NOOP-Pro-ipa-${{ matrix.runner }}
           path: ${{ steps.pkg.outputs.ipa }}
       - name: Publish to the rolling release
         env:
