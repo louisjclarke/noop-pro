@@ -52,13 +52,26 @@ jobs:
     # Runs in parallel with the package tests so a slow runner queue costs one wait, not two.
     needs: check
     if: needs.check.outputs.need == 'true'
-    # iOS 26 SDK (Liquid Glass) → Xcode 26 → macos-26, same as upstream's release job.
-    runs-on: macos-26
+    # Hosted Mac capacity has been failing to acquire jobs for hours at a time (18 Nov). Ask three
+    # different Mac pools at once; whichever gets a machine builds and publishes. Duplicates are harmless
+    # (same commit, same asset names, --clobber).
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-26, macos-15, macos-latest]
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 50
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v5
+      - name: Select an Xcode 26 toolchain (iOS 26 SDK)
+        run: |
+          XC=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1)
+          if [ -z "$XC" ] && xcodebuild -version | grep -q 'Xcode 26'; then XC=$(xcode-select -p | sed 's#/Contents/Developer##'); fi
+          [ -n "$XC" ] || { echo "No Xcode 26 on this runner image"; ls /Applications | grep Xcode; exit 1; }
+          sudo xcode-select -s "$XC"
+          xcodebuild -version
       - name: Install XcodeGen
         run: brew install xcodegen
       - name: Generate Xcode project
